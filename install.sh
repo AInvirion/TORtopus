@@ -674,8 +674,20 @@ add_proxy_user() {
     # Prompt for password
     local password
     while true; do
-        read -s -p "Enter password for '$username': " password
+        read -s -p "Enter password for '$username' (alphanumeric only): " password
         echo
+
+        # Validate alphanumeric only
+        if [[ ! "$password" =~ ^[a-zA-Z0-9]+$ ]]; then
+            error "Password must contain only letters and numbers (no special characters)"
+            continue
+        fi
+
+        if [[ ${#password} -lt 8 ]]; then
+            error "Password must be at least 8 characters long"
+            continue
+        fi
+
         read -s -p "Confirm password: " password_confirm
         echo
 
@@ -1036,8 +1048,30 @@ interactive_setup() {
     # User creation
     log "=== Phase 4: User Setup ==="
 
+    # Auto-generate first user with random credentials
+    info "Generating default proxy user..."
+    local first_user="user$(openssl rand -hex 3)"
+    local first_pass="$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)"
+
+    # Create first user
+    htpasswd -b -c "$SQUID_USERS_FILE" "$first_user" "$first_pass" &>/dev/null
+    chmod 640 "$SQUID_USERS_FILE"
+    chown root:proxy "$SQUID_USERS_FILE" 2>/dev/null || true
+
+    # Save credentials for display
+    FIRST_USER="$first_user"
+    FIRST_PASS="$first_pass"
+
+    log "Default user created: $first_user"
+
+    # Optional: add more users
+    echo ""
+    info "A default user has been created automatically."
+    info "You can add more users now, or use 'tortopus-user add <username>' later."
+    echo ""
+
     while true; do
-        read -p "Enter username for proxy access (or 'done' to finish): " username
+        read -p "Add another user? (username or 'done' to finish): " username
         [[ "$username" == "done" ]] && break
         [[ -z "$username" ]] && continue
 
@@ -1074,6 +1108,16 @@ interactive_setup() {
     echo "  - Tor: SOCKS5 on port 9050"
     echo "  - Backups: $BACKUP_DIR"
     echo ""
+    echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}   AUTO-GENERATED PROXY CREDENTIALS (Save These!)${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "  Username: ${GREEN}${FIRST_USER}${NC}"
+    echo -e "  Password: ${GREEN}${FIRST_PASS}${NC}"
+    echo ""
+    echo -e "${YELLOW}  ⚠️  SAVE THESE CREDENTIALS - They won't be shown again!${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
     echo "Management Commands:"
     echo "  tortopus-user add <username>        - Add proxy user"
     echo "  tortopus-user list                  - List users"
@@ -1082,7 +1126,7 @@ interactive_setup() {
     echo "  tortopus-rollback                   - Restore backups"
     echo ""
     echo "Test Your Proxy:"
-    echo "  curl -x http://username:password@$(hostname -I | awk '{print $1}'):3128 https://ifconfig.me"
+    echo "  curl --proxy-anyauth -x 'http://${FIRST_USER}:${FIRST_PASS}@$(hostname -I | awk '{print $1}'):3128' https://ifconfig.me"
     echo ""
     echo -e "${YELLOW}IMPORTANT: SSH password authentication is now disabled.${NC}"
     echo -e "${YELLOW}Ensure you can log in with your SSH key before closing this session!${NC}"

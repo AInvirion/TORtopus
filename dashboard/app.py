@@ -76,6 +76,14 @@ def add_proxy_user(username, password):
     if not re.match(r'^[a-zA-Z0-9_]+$', username):
         return False, "Username must contain only letters, numbers, and underscores"
 
+    # Validate password (alphanumeric only - no special characters)
+    if not re.match(r'^[a-zA-Z0-9]+$', password):
+        return False, "Password must contain only letters and numbers (no special characters)"
+
+    # Validate password length
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long"
+
     # Check if user already exists
     users = get_proxy_users()
     if username in users:
@@ -116,6 +124,14 @@ def change_user_password(username, new_password):
     users = get_proxy_users()
     if username not in users:
         return False, f"User '{username}' not found"
+
+    # Validate password (alphanumeric only)
+    if not re.match(r'^[a-zA-Z0-9]+$', new_password):
+        return False, "Password must contain only letters and numbers (no special characters)"
+
+    # Validate password length
+    if len(new_password) < 8:
+        return False, "Password must be at least 8 characters long"
 
     # Update password using htpasswd
     success, stdout, stderr = run_command(

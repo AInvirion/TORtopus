@@ -290,8 +290,8 @@
                         <input type="text" id="username" name="username" placeholder="Enter username" required pattern="[a-zA-Z0-9_]+" title="Only letters, numbers, and underscores">
                     </div>
                     <div class="form-group">
-                        <label for="password">Password</label>
-                        <input type="password" id="password" name="password" placeholder="Enter password" required minlength="6">
+                        <label for="password">Password (alphanumeric only, min 8 chars)</label>
+                        <input type="password" id="password" name="password" placeholder="Enter password" required minlength="8" pattern="[a-zA-Z0-9]+" title="Only letters and numbers, no special characters">
                     </div>
                     <div class="form-group">
                         <button type="submit" class="btn btn-primary">Add User</button>
@@ -343,29 +343,41 @@
     <!-- Change Password Modal (Simple) -->
     <script>
         function changePassword(username) {
-            const newPassword = prompt(`Enter new password for user: ${username}`);
-            if (newPassword && newPassword.length >= 6) {
-                const form = document.createElement('form');
-                form.method = 'POST';
-                form.action = '{{ url_for("change_password") }}';
+            const newPassword = prompt(`Enter new password for user: ${username}\n(Alphanumeric only, min 8 characters)`);
 
-                const usernameInput = document.createElement('input');
-                usernameInput.type = 'hidden';
-                usernameInput.name = 'username';
-                usernameInput.value = username;
+            if (newPassword === null) return; // User cancelled
 
-                const passwordInput = document.createElement('input');
-                passwordInput.type = 'hidden';
-                passwordInput.name = 'new_password';
-                passwordInput.value = newPassword;
-
-                form.appendChild(usernameInput);
-                form.appendChild(passwordInput);
-                document.body.appendChild(form);
-                form.submit();
-            } else if (newPassword !== null) {
-                alert('Password must be at least 6 characters long');
+            // Validate length
+            if (newPassword.length < 8) {
+                alert('Password must be at least 8 characters long');
+                return;
             }
+
+            // Validate alphanumeric only
+            if (!/^[a-zA-Z0-9]+$/.test(newPassword)) {
+                alert('Password must contain only letters and numbers (no special characters)');
+                return;
+            }
+
+            // Submit form
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '{{ url_for("change_password") }}';
+
+            const usernameInput = document.createElement('input');
+            usernameInput.type = 'hidden';
+            usernameInput.name = 'username';
+            usernameInput.value = username;
+
+            const passwordInput = document.createElement('input');
+            passwordInput.type = 'hidden';
+            passwordInput.name = 'new_password';
+            passwordInput.value = newPassword;
+
+            form.appendChild(usernameInput);
+            form.appendChild(passwordInput);
+            document.body.appendChild(form);
+            form.submit();
         }
     </script>
 </body>
