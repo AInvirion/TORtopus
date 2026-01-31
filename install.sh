@@ -263,6 +263,49 @@ EOF
 configure_firewall() {
     log "Configuring UFW firewall..."
 
+    # Detect actual SSH port (CRITICAL for non-standard ports)
+    local ssh_port=""
+
+    # Method 1: Check current SSH connection
+    if [[ -n "${SSH_CONNECTION:-}" ]]; then
+        ssh_port=$(echo "$SSH_CONNECTION" | awk '{print $4}')
+        info "Detected SSH port from connection: $ssh_port"
+    fi
+
+    # Method 2: Check what port sshd is actually listening on
+    if [[ -z "$ssh_port" ]]; then
+        ssh_port=$(ss -tlnp 2>/dev/null | grep sshd | grep -oP '(?<=:)\d+(?= )' | head -1)
+        if [[ -z "$ssh_port" ]]; then
+            ssh_port=$(netstat -tlnp 2>/dev/null | grep sshd | grep -oP '(?<=:)\d+(?= )' | head -1)
+        fi
+        if [[ -n "$ssh_port" ]]; then
+            info "Detected SSH listening port: $ssh_port"
+        fi
+    fi
+
+    # Method 3: Check sshd_config
+    if [[ -z "$ssh_port" ]]; then
+        ssh_port=$(grep "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+        if [[ -n "$ssh_port" ]]; then
+            info "Detected SSH port from config: $ssh_port"
+        fi
+    fi
+
+    # Default to 22 if still not found
+    if [[ -z "$ssh_port" ]] || [[ ! "$ssh_port" =~ ^[0-9]+$ ]]; then
+        ssh_port=22
+        warning "Could not detect SSH port, defaulting to 22"
+    fi
+
+    # CRITICAL WARNING for non-standard ports
+    if [[ "$ssh_port" != "22" ]]; then
+        warning "═══════════════════════════════════════════════════════"
+        warning "NON-STANDARD SSH PORT DETECTED: $ssh_port"
+        warning "The firewall will allow this port. Verify this is correct!"
+        warning "═══════════════════════════════════════════════════════"
+        sleep 3
+    fi
+
     # Reset to defaults
     ufw --force reset
 
@@ -270,23 +313,49 @@ configure_firewall() {
     ufw default deny incoming
     ufw default allow outgoing
 
-    # Get current SSH port
-    local ssh_port=$(grep "^Port " /etc/ssh/sshd_config | awk '{print $2}')
-    ssh_port=${ssh_port:-22}
-
-    # Allow SSH
+    # Allow SSH (MOST IMPORTANT - Do this first!)
+    info "Allowing SSH on port $ssh_port/tcp"
     ufw allow "$ssh_port/tcp" comment 'SSH'
 
     # Allow Squid proxy
+    info "Allowing Squid proxy on port 3128/tcp"
     ufw allow 3128/tcp comment 'Squid Proxy'
 
     # Allow Tor SOCKS
+    info "Allowing Tor SOCKS5 on port 9050/tcp"
     ufw allow 9050/tcp comment 'Tor SOCKS5'
+
+    # Show rules before enabling
+    echo ""
+    warning "Firewall rules to be applied:"
+    ufw show added
+    echo ""
+
+    # Final safety check
+    warning "═══════════════════════════════════════════════════════"
+    warning "ABOUT TO ENABLE FIREWALL"
+    warning "SSH Port $ssh_port will be allowed"
+    warning "If this port is wrong, you may be locked out!"
+    warning "═══════════════════════════════════════════════════════"
+
+    if ! confirm_action "Enable firewall with these rules?"; then
+        warning "Firewall configuration cancelled"
+        return 0
+    fi
 
     # Enable firewall
     ufw --force enable
 
-    log "Firewall configured and enabled"
+    # Verify SSH port is allowed
+    if ! ufw status | grep -q "$ssh_port.*ALLOW"; then
+        error "CRITICAL: SSH port $ssh_port is not allowed in firewall!"
+        error "Disabling firewall for safety..."
+        ufw disable
+        return 1
+    fi
+
+    log "Firewall configured and enabled successfully"
+    log "SSH port $ssh_port is allowed"
 }
 
 configure_fail2ban() {
