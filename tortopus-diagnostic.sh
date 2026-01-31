@@ -4,7 +4,8 @@
 # Comprehensive system health check for TORtopus installation
 #
 
-set -euo pipefail
+# Don't exit on error - we want to show all diagnostics
+set -uo pipefail
 
 # Colors
 RED='\033[0;31m'
@@ -96,6 +97,28 @@ if [[ -n "${SSH_CONNECTION:-}" ]]; then
     check_info "SSH Connection: Port $ssh_port"
 fi
 
+print_section "System Resources"
+# Memory usage
+local mem_total=$(free -h | awk '/^Mem:/ {print $2}')
+local mem_used=$(free -h | awk '/^Mem:/ {print $3}')
+local mem_percent=$(free | awk '/^Mem:/ {printf "%.1f", $3/$2 * 100}')
+check_info "Memory: $mem_used / $mem_total (${mem_percent}% used)"
+
+# Disk usage
+local disk_usage=$(df -h / | awk 'NR==2 {print $5}' | tr -d '%')
+local disk_info=$(df -h / | awk 'NR==2 {print $3 " / " $2}')
+check_info "Disk: $disk_info (${disk_usage}% used)"
+
+if [[ "$disk_usage" -gt 90 ]]; then
+    check_warn "Disk usage above 90%"
+elif [[ "$disk_usage" -gt 80 ]]; then
+    check_warn "Disk usage above 80%"
+fi
+
+# Load average
+local load_avg=$(uptime | awk -F'load average:' '{print $2}' | xargs)
+check_info "Load Average: $load_avg"
+
 #=============================================================================
 # Package Checks
 #=============================================================================
@@ -111,7 +134,7 @@ run_check "Tor" "command -v tor"
 run_check "Squid" "command -v squid"
 
 print_section "Utilities"
-run_check "htdigest (user management)" "command -v htdigest"
+run_check "htpasswd (user management)" "command -v htpasswd"
 run_check "curl (testing)" "command -v curl"
 
 #=============================================================================
@@ -324,16 +347,31 @@ if [[ -f /etc/squid/squid.conf ]]; then
     fi
 
     # Check if authentication is configured
-    if grep -q "^auth_param digest" /etc/squid/squid.conf; then
-        check_pass "Digest authentication configured"
+    if grep -q "^auth_param basic" /etc/squid/squid.conf; then
+        check_pass "Basic authentication configured"
+
+        # Show auth program
+        local auth_program=$(grep "^auth_param basic program" /etc/squid/squid.conf | cut -d' ' -f4-)
+        if [[ -n "$auth_program" ]]; then
+            check_info "Auth program: $auth_program"
+        fi
     else
-        check_warn "Digest authentication not found in config"
+        check_warn "Basic authentication not found in config"
     fi
 
     # Check password file
     if [[ -f /etc/squid/passwords ]]; then
-        local user_count=$(wc -l < /etc/squid/passwords)
+        local user_count=$(wc -l < /etc/squid/passwords 2>/dev/null || echo "0")
         check_pass "Password file exists ($user_count users configured)"
+
+        if [[ "$user_count" -gt 0 ]]; then
+            print_section "Configured Proxy Users"
+            while IFS=: read -r username _; do
+                check_info "User: $username"
+            done < /etc/squid/passwords
+        else
+            check_warn "No users configured in password file"
+        fi
     else
         check_warn "Password file not found at /etc/squid/passwords"
     fi
@@ -460,6 +498,49 @@ if [[ -n "$tor_warnings" ]]; then
 fi
 
 #=============================================================================
+# Proxy Functionality Tests
+#=============================================================================
+print_header "PROXY FUNCTIONALITY"
+
+if command -v curl &>/dev/null && systemctl is-active --quiet squid 2>/dev/null; then
+    print_section "Proxy Connectivity Tests"
+
+    # Get first user from password file for testing
+    if [[ -f /etc/squid/passwords ]]; then
+        local test_user=$(head -1 /etc/squid/passwords 2>/dev/null | cut -d: -f1)
+
+        if [[ -n "$test_user" ]]; then
+            check_info "Testing with user: $test_user"
+
+            # Note: We can't test with password since it's hashed
+            # Just check if proxy responds to requests
+            local proxy_response=$(timeout 5 curl -x http://127.0.0.1:3128 -s -o /dev/null -w "%{http_code}" https://ifconfig.me 2>/dev/null || echo "000")
+
+            if [[ "$proxy_response" == "200" ]]; then
+                check_pass "Proxy accepting connections (HTTP 200)"
+            elif [[ "$proxy_response" == "407" ]]; then
+                check_pass "Proxy responding (requires authentication - expected)"
+            else
+                check_warn "Proxy response: HTTP $proxy_response"
+            fi
+
+            # Check proxy mode
+            if grep -q "^cache_peer.*parent 9050" /etc/squid/squid.conf 2>/dev/null; then
+                check_info "Proxy Mode: Tor (routing through Tor network)"
+            else
+                check_info "Proxy Mode: Direct (not routing through Tor)"
+            fi
+        else
+            check_warn "No users found to test proxy authentication"
+        fi
+    else
+        check_warn "Cannot test proxy - no users configured"
+    fi
+else
+    check_warn "Cannot test proxy - curl or squid not available"
+fi
+
+#=============================================================================
 # Network Connectivity
 #=============================================================================
 print_header "NETWORK CONNECTIVITY"
@@ -497,18 +578,67 @@ echo ""
 
 if [[ $FAILED -eq 0 ]] && [[ $WARNINGS -eq 0 ]]; then
     echo -e "${GREEN}✓ All checks passed! TORtopus is healthy.${NC}"
+    echo ""
+    echo "Quick Commands:"
+    echo "  tortopus-user add <username>        - Add new proxy user"
+    echo "  tortopus-user list                  - List all users"
+    echo "  tortopus-config --mode tor          - Switch to Tor mode"
+    echo "  tortopus-config --mode direct       - Switch to direct mode"
+    echo "  systemctl status squid tor fail2ban - Check service status"
+    echo ""
     exit 0
 elif [[ $FAILED -eq 0 ]]; then
     echo -e "${YELLOW}⚠ Some warnings detected. Review above.${NC}"
+    echo ""
+    echo "Common fixes:"
+    echo "  - Enable service: sudo systemctl enable <service>"
+    echo "  - Check logs: sudo journalctl -u <service> -n 50"
+    echo ""
     exit 0
 else
     echo -e "${RED}✗ Some checks failed. Review above and take corrective action.${NC}"
     echo ""
-    echo "Common fixes:"
-    echo "  - Service not running: sudo systemctl start <service>"
-    echo "  - Service not enabled: sudo systemctl enable <service>"
-    echo "  - Configuration errors: Check logs with journalctl -u <service>"
-    echo "  - Firewall issues: sudo ufw allow <port>/tcp"
+
+    print_section "Recommended Actions"
+
+    # Check if services are down
+    if ! systemctl is-active --quiet squid 2>/dev/null; then
+        echo -e "  ${YELLOW}▶${NC} Squid not running:"
+        echo "    sudo systemctl start squid"
+        echo "    sudo journalctl -u squid -n 20"
+    fi
+
+    if ! systemctl is-active --quiet tor 2>/dev/null; then
+        echo -e "  ${YELLOW}▶${NC} Tor not running:"
+        echo "    sudo systemctl start tor"
+        echo "    sudo journalctl -u tor -n 20"
+    fi
+
+    if ! systemctl is-active --quiet fail2ban 2>/dev/null; then
+        echo -e "  ${YELLOW}▶${NC} fail2ban not running:"
+        echo "    sudo systemctl start fail2ban"
+        echo "    sudo journalctl -u fail2ban -n 20"
+    fi
+
+    # Check firewall issues
+    SSH_PORT_CHECK=$(ss -tlnp 2>/dev/null | grep sshd | grep -oP '(?<=:)\d+(?= )' | head -1 || echo "22")
+    if ! ufw status 2>/dev/null | grep -q "$SSH_PORT_CHECK.*ALLOW"; then
+        echo -e "  ${RED}▶${NC} SSH port not in firewall (CRITICAL):"
+        echo "    sudo ufw allow $SSH_PORT_CHECK/tcp"
+    fi
+
+    # Check if no users configured
+    if [[ ! -f /etc/squid/passwords ]] || [[ ! -s /etc/squid/passwords ]]; then
+        echo -e "  ${YELLOW}▶${NC} No proxy users configured:"
+        echo "    tortopus-user add <username>"
+    fi
+
+    echo ""
+    echo "General troubleshooting:"
+    echo "  - View logs: journalctl -u <service> -f"
+    echo "  - Test config: squid -k parse"
+    echo "  - Restart service: systemctl restart <service>"
+    echo "  - Check installation log: tail -100 /var/log/tortopus/install.log"
     echo ""
     exit 1
 fi
