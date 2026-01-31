@@ -407,6 +407,14 @@ configure_fail2ban() {
     # Backup original jail.local if exists
     [[ -f /etc/fail2ban/jail.local ]] && backup_file /etc/fail2ban/jail.local
 
+    # Ensure Squid log file exists (fail2ban needs it)
+    if [[ ! -f /var/log/squid/access.log ]]; then
+        mkdir -p /var/log/squid
+        touch /var/log/squid/access.log
+        chown proxy:proxy /var/log/squid/access.log 2>/dev/null || chown root:root /var/log/squid/access.log
+        chmod 640 /var/log/squid/access.log
+    fi
+
     # Create jail.local
     cat > /etc/fail2ban/jail.local << 'EOF'
 [DEFAULT]
@@ -444,7 +452,13 @@ EOF
     systemctl enable fail2ban
     systemctl restart fail2ban
 
-    log "fail2ban configured and started"
+    # Verify fail2ban started successfully
+    sleep 2
+    if systemctl is-active --quiet fail2ban; then
+        log "fail2ban configured and started"
+    else
+        warning "fail2ban may have issues, check: journalctl -u fail2ban -n 20"
+    fi
 }
 
 configure_auto_updates() {
@@ -491,9 +505,8 @@ install_tor() {
     cat > /etc/tor/torrc << 'EOF'
 # TORtopus Tor Configuration
 
-# SOCKS proxy
+# SOCKS proxy (localhost only for security)
 SOCKSPort 127.0.0.1:9050
-SOCKSPort 0.0.0.0:9050
 
 # Control port (for management)
 ControlPort 9051
@@ -510,8 +523,15 @@ CookieAuthentication 1
 DataDirectory /var/lib/tor
 EOF
 
+    # For Ubuntu's multi-instance Tor setup, need to handle both
     systemctl enable tor
     systemctl restart tor
+
+    # Also ensure the actual instance is running
+    if systemctl list-units "tor@*" --all | grep -q "tor@default"; then
+        systemctl enable tor@default
+        systemctl restart tor@default
+    fi
 
     # Wait for Tor to start
     sleep 5
