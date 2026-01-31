@@ -357,38 +357,46 @@ EOF
 configure_firewall() {
     log "Configuring UFW firewall..."
 
-    # Detect actual SSH port (CRITICAL for non-standard ports)
+    # Use SSH port from configure_ssh if available, otherwise detect
     local ssh_port=""
 
-    # Method 1: Check current SSH connection
-    if [[ -n "${SSH_CONNECTION:-}" ]]; then
-        ssh_port=$(echo "$SSH_CONNECTION" | awk '{print $4}')
-        info "Detected SSH port from connection: $ssh_port"
-    fi
+    # Priority 1: Use SSH_PORT if set by configure_ssh (user may have changed it)
+    if [[ -n "${SSH_PORT:-}" ]]; then
+        ssh_port="$SSH_PORT"
+        info "Using SSH port from configuration: $ssh_port"
+    else
+        # Fallback: Detect actual SSH port (CRITICAL for non-standard ports)
 
-    # Method 2: Check what port sshd is actually listening on
-    if [[ -z "$ssh_port" ]]; then
-        ssh_port=$(ss -tlnp 2>/dev/null | grep sshd | grep -oP '(?<=:)\d+(?= )' | head -1)
+        # Method 1: Check current SSH connection
+        if [[ -n "${SSH_CONNECTION:-}" ]]; then
+            ssh_port=$(echo "$SSH_CONNECTION" | awk '{print $4}')
+            info "Detected SSH port from connection: $ssh_port"
+        fi
+
+        # Method 2: Check what port sshd is actually listening on
         if [[ -z "$ssh_port" ]]; then
-            ssh_port=$(netstat -tlnp 2>/dev/null | grep sshd | grep -oP '(?<=:)\d+(?= )' | head -1)
+            ssh_port=$(ss -tlnp 2>/dev/null | grep sshd | grep -oP '(?<=:)\d+(?= )' | head -1)
+            if [[ -z "$ssh_port" ]]; then
+                ssh_port=$(netstat -tlnp 2>/dev/null | grep sshd | grep -oP '(?<=:)\d+(?= )' | head -1)
+            fi
+            if [[ -n "$ssh_port" ]]; then
+                info "Detected SSH listening port: $ssh_port"
+            fi
         fi
-        if [[ -n "$ssh_port" ]]; then
-            info "Detected SSH listening port: $ssh_port"
-        fi
-    fi
 
-    # Method 3: Check sshd_config
-    if [[ -z "$ssh_port" ]]; then
-        ssh_port=$(grep "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
-        if [[ -n "$ssh_port" ]]; then
-            info "Detected SSH port from config: $ssh_port"
+        # Method 3: Check sshd_config
+        if [[ -z "$ssh_port" ]]; then
+            ssh_port=$(grep "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+            if [[ -n "$ssh_port" ]]; then
+                info "Detected SSH port from config: $ssh_port"
+            fi
         fi
-    fi
 
-    # Default to 22 if still not found
-    if [[ -z "$ssh_port" ]] || [[ ! "$ssh_port" =~ ^[0-9]+$ ]]; then
-        ssh_port=22
-        warning "Could not detect SSH port, defaulting to 22"
+        # Default to 22 if still not found
+        if [[ -z "$ssh_port" ]] || [[ ! "$ssh_port" =~ ^[0-9]+$ ]]; then
+            ssh_port=22
+            warning "Could not detect SSH port, defaulting to 22"
+        fi
     fi
 
     # CRITICAL WARNING for non-standard ports
