@@ -92,7 +92,7 @@ check_info "Uptime: $(uptime -p 2>/dev/null || uptime)"
 check_info "Current User: $(whoami)"
 
 if [[ -n "${SSH_CONNECTION:-}" ]]; then
-    local ssh_port=$(echo "$SSH_CONNECTION" | awk '{print $4}')
+    ssh_port=$(echo "$SSH_CONNECTION" | awk '{print $4}')
     check_info "SSH Connection: Port $ssh_port"
 fi
 
@@ -452,7 +452,7 @@ if [[ -f /var/log/squid/cache.log ]]; then
 fi
 
 # Tor warnings
-local tor_warnings=$(journalctl -u tor --no-pager -n 50 2>/dev/null | grep -i "warn\|err" | tail -3)
+tor_warnings=$(journalctl -u tor --no-pager -n 50 2>/dev/null | grep -i "warn\|err" | tail -3)
 if [[ -n "$tor_warnings" ]]; then
     echo "$tor_warnings" | while read line; do
         check_warn "Tor: $line"
