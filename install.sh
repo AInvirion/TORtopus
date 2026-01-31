@@ -1,0 +1,954 @@
+#!/bin/bash
+#
+# TORtopus - Ubuntu Server Hardening + Tor/Squid Proxy Installer
+# Copyright (c) 2025-2026 AInvirion LLC
+# Licensed under Apache License 2.0
+#
+# This script performs security hardening and installs Tor+Squid proxy
+# WARNING: This script makes significant system changes. Review before running.
+#
+
+set -euo pipefail
+
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Configuration
+BACKUP_DIR="/var/backups/tortopus"
+INSTALL_LOG="/var/log/tortopus-install.log"
+SQUID_USERS_FILE="/etc/squid/passwords"
+BIN_DIR="/usr/local/bin"
+
+# Version info
+VERSION="1.0.0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+#=============================================================================
+# Helper Functions
+#=============================================================================
+
+log() {
+    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $*" | tee -a "$INSTALL_LOG"
+}
+
+error() {
+    echo -e "${RED}[ERROR]${NC} $*" | tee -a "$INSTALL_LOG" >&2
+}
+
+warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $*" | tee -a "$INSTALL_LOG"
+}
+
+info() {
+    echo -e "${BLUE}[INFO]${NC} $*" | tee -a "$INSTALL_LOG"
+}
+
+print_banner() {
+    echo -e "${BLUE}"
+    cat << "EOF"
+╔════════════════════════════════════════════════════════════════╗
+║                                                                ║
+║   ████████╗ ██████╗ ██████╗ ████████╗ ██████╗ ██████╗ ██╗   ██╗███████╗   ║
+║   ╚══██╔══╝██╔═══██╗██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗██║   ██║██╔════╝   ║
+║      ██║   ██║   ██║██████╔╝   ██║   ██║   ██║██████╔╝██║   ██║███████╗   ║
+║      ██║   ██║   ██║██╔══██╗   ██║   ██║   ██║██╔═══╝ ██║   ██║╚════██║   ║
+║      ██║   ╚██████╔╝██║  ██║   ██║   ╚██████╔╝██║     ╚██████╔╝███████║   ║
+║      ╚═╝    ╚═════╝ ╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝      ╚═════╝ ╚══════╝   ║
+║                                                                ║
+║         Ubuntu Hardening + Tor/Squid Proxy Installer          ║
+║                      Version: v1.0.0                           ║
+║                                                                ║
+╚════════════════════════════════════════════════════════════════╝
+EOF
+    echo -e "${NC}"
+}
+
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        error "This script must be run as root (use sudo)"
+        exit 1
+    fi
+}
+
+check_ubuntu() {
+    if [[ ! -f /etc/os-release ]]; then
+        error "Cannot detect OS. This script is for Ubuntu only."
+        exit 1
+    fi
+
+    source /etc/os-release
+
+    if [[ "$ID" != "ubuntu" ]]; then
+        error "This script is designed for Ubuntu. Detected: $ID"
+        exit 1
+    fi
+
+    # Check version
+    local version_id="${VERSION_ID}"
+    if [[ ! "$version_id" =~ ^(20.04|22.04|24.04) ]]; then
+        warning "Tested on Ubuntu 20.04, 22.04, and 24.04 LTS. You have: $version_id"
+        read -p "Continue anyway? (y/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
+        fi
+    fi
+
+    log "Detected: Ubuntu $version_id"
+}
+
+create_backup_dir() {
+    if [[ ! -d "$BACKUP_DIR" ]]; then
+        mkdir -p "$BACKUP_DIR"
+        chmod 700 "$BACKUP_DIR"
+        log "Created backup directory: $BACKUP_DIR"
+    fi
+}
+
+backup_file() {
+    local file="$1"
+    if [[ -f "$file" ]]; then
+        local backup_name="$(basename "$file").backup.$(date +%Y%m%d_%H%M%S)"
+        cp -a "$file" "$BACKUP_DIR/$backup_name"
+        log "Backed up: $file -> $BACKUP_DIR/$backup_name"
+    fi
+}
+
+confirm_action() {
+    local message="$1"
+    echo -e "${YELLOW}$message${NC}"
+    read -p "Continue? (y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        warning "Operation cancelled by user"
+        return 1
+    fi
+    return 0
+}
+
+#=============================================================================
+# System Updates
+#=============================================================================
+
+update_system() {
+    log "Updating system packages..."
+
+    export DEBIAN_FRONTEND=noninteractive
+
+    apt-get update -qq
+    apt-get upgrade -y -qq
+    apt-get dist-upgrade -y -qq
+    apt-get autoremove -y -qq
+    apt-get autoclean -qq
+
+    log "System updated successfully"
+}
+
+#=============================================================================
+# Security Hardening
+#=============================================================================
+
+install_security_packages() {
+    log "Installing security packages..."
+
+    local packages=(
+        "ufw"
+        "fail2ban"
+        "unattended-upgrades"
+        "apt-listchanges"
+        "openssl"
+        "apache2-utils"
+    )
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y -qq "${packages[@]}"
+
+    log "Security packages installed"
+}
+
+configure_ssh() {
+    log "Configuring SSH hardening..."
+
+    local ssh_config="/etc/ssh/sshd_config"
+
+    # Backup original
+    backup_file "$ssh_config"
+
+    # Check if SSH keys are configured
+    local has_keys=false
+    if [[ -f /root/.ssh/authorized_keys ]] && [[ -s /root/.ssh/authorized_keys ]]; then
+        has_keys=true
+        info "Found SSH authorized_keys for root"
+    fi
+
+    # Check for other users with sudo access
+    local sudo_users=$(getent group sudo | cut -d: -f4)
+    for user in ${sudo_users//,/ }; do
+        if [[ -f "/home/$user/.ssh/authorized_keys" ]] && [[ -s "/home/$user/.ssh/authorized_keys" ]]; then
+            has_keys=true
+            info "Found SSH authorized_keys for user: $user"
+        fi
+    done
+
+    if [[ "$has_keys" == "false" ]]; then
+        error "No SSH keys found in authorized_keys!"
+        error "You must add your public key before disabling password auth"
+        error "Example: cat ~/.ssh/id_ed25519.pub | ssh root@server 'cat >> ~/.ssh/authorized_keys'"
+        return 1
+    fi
+
+    # Apply hardening
+    cat > "$ssh_config" << 'EOF'
+# TORtopus SSH Configuration
+# Generated by TORtopus installer
+
+# Port and listening
+Port 22
+AddressFamily any
+ListenAddress 0.0.0.0
+
+# Authentication
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+PasswordAuthentication no
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+UsePAM yes
+
+# Security settings
+X11Forwarding no
+PrintMotd no
+AcceptEnv LANG LC_*
+Subsystem sftp /usr/lib/openssh/sftp-server
+
+# Additional hardening
+Protocol 2
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
+
+# Connection settings
+ClientAliveInterval 300
+ClientAliveCountMax 2
+MaxAuthTries 3
+MaxSessions 10
+LoginGraceTime 60
+
+# Logging
+SyslogFacility AUTH
+LogLevel VERBOSE
+EOF
+
+    # Test configuration
+    if ! sshd -t; then
+        error "SSH configuration test failed! Restoring backup..."
+        cp "$BACKUP_DIR/sshd_config.backup."* "$ssh_config" 2>/dev/null || true
+        return 1
+    fi
+
+    warning "SSH will be restarted. Ensure you have an active SSH key!"
+    warning "Backup config saved at: $BACKUP_DIR"
+    sleep 3
+
+    systemctl restart sshd
+    log "SSH hardening complete - Password authentication disabled"
+}
+
+configure_firewall() {
+    log "Configuring UFW firewall..."
+
+    # Reset to defaults
+    ufw --force reset
+
+    # Default policies
+    ufw default deny incoming
+    ufw default allow outgoing
+
+    # Get current SSH port
+    local ssh_port=$(grep "^Port " /etc/ssh/sshd_config | awk '{print $2}')
+    ssh_port=${ssh_port:-22}
+
+    # Allow SSH
+    ufw allow "$ssh_port/tcp" comment 'SSH'
+
+    # Allow Squid proxy
+    ufw allow 3128/tcp comment 'Squid Proxy'
+
+    # Allow Tor SOCKS
+    ufw allow 9050/tcp comment 'Tor SOCKS5'
+
+    # Enable firewall
+    ufw --force enable
+
+    log "Firewall configured and enabled"
+}
+
+configure_fail2ban() {
+    log "Configuring fail2ban..."
+
+    # Backup original jail.local if exists
+    [[ -f /etc/fail2ban/jail.local ]] && backup_file /etc/fail2ban/jail.local
+
+    # Create jail.local
+    cat > /etc/fail2ban/jail.local << 'EOF'
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 5
+destemail = root@localhost
+sendername = Fail2Ban
+action = %(action_mw)s
+
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 3
+bantime = 7200
+
+[squid]
+enabled = true
+port = 3128
+filter = squid
+logpath = /var/log/squid/access.log
+maxretry = 10
+bantime = 3600
+EOF
+
+    # Create squid filter
+    cat > /etc/fail2ban/filter.d/squid.conf << 'EOF'
+[Definition]
+failregex = ^.*TCP_DENIED/407.*<HOST>.*$
+ignoreregex =
+EOF
+
+    systemctl enable fail2ban
+    systemctl restart fail2ban
+
+    log "fail2ban configured and started"
+}
+
+configure_auto_updates() {
+    log "Configuring automatic security updates..."
+
+    backup_file /etc/apt/apt.conf.d/50unattended-upgrades
+
+    cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+Unattended-Upgrade::MinimalSteps "true";
+Unattended-Upgrade::InstallOnShutdown "false";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+EOF
+
+    cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+
+    log "Automatic security updates enabled"
+}
+
+#=============================================================================
+# Tor + Squid Installation
+#=============================================================================
+
+install_tor() {
+    log "Installing Tor..."
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y -qq tor
+
+    backup_file /etc/tor/torrc
+
+    cat > /etc/tor/torrc << 'EOF'
+# TORtopus Tor Configuration
+
+# SOCKS proxy
+SOCKSPort 127.0.0.1:9050
+SOCKSPort 0.0.0.0:9050
+
+# Control port (for management)
+ControlPort 9051
+
+# Logging
+Log notice file /var/log/tor/notices.log
+
+# Performance
+NumEntryGuards 8
+CircuitBuildTimeout 30
+
+# Security
+CookieAuthentication 1
+DataDirectory /var/lib/tor
+EOF
+
+    systemctl enable tor
+    systemctl restart tor
+
+    # Wait for Tor to start
+    sleep 5
+
+    # Verify Tor is running
+    if systemctl is-active --quiet tor; then
+        log "Tor installed and running"
+    else
+        error "Tor failed to start"
+        journalctl -u tor -n 20
+        return 1
+    fi
+}
+
+install_squid() {
+    log "Installing Squid..."
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y -qq squid
+
+    backup_file /etc/squid/squid.conf
+
+    # Create password file
+    mkdir -p "$(dirname "$SQUID_USERS_FILE")"
+    touch "$SQUID_USERS_FILE"
+    chmod 640 "$SQUID_USERS_FILE"
+    chown root:proxy "$SQUID_USERS_FILE"
+
+    cat > /etc/squid/squid.conf << 'EOF'
+# TORtopus Squid Configuration
+
+# HTTP port
+http_port 3128
+
+# Authentication
+auth_param digest program /usr/lib/squid/digest_file_auth -c /etc/squid/passwords
+auth_param digest children 5
+auth_param digest realm TORtopus Proxy
+auth_param digest nonce_garbage_interval 5 minutes
+auth_param digest nonce_max_duration 30 minutes
+auth_param digest nonce_max_count 50
+
+# ACLs
+acl authenticated proxy_auth REQUIRED
+acl localhost src 127.0.0.1/32
+acl to_localhost dst 127.0.0.0/8
+acl localnet src 10.0.0.0/8
+acl localnet src 172.16.0.0/12
+acl localnet src 192.168.0.0/16
+acl SSL_ports port 443
+acl Safe_ports port 80
+acl Safe_ports port 21
+acl Safe_ports port 443
+acl Safe_ports port 70
+acl Safe_ports port 210
+acl Safe_ports port 1025-65535
+acl Safe_ports port 280
+acl Safe_ports port 488
+acl Safe_ports port 591
+acl Safe_ports port 777
+acl CONNECT method CONNECT
+
+# Access rules
+http_access deny !Safe_ports
+http_access deny CONNECT !SSL_ports
+http_access allow localhost
+http_access allow authenticated
+http_access deny all
+
+# Caching
+cache_dir ufs /var/spool/squid 100 16 256
+cache_mem 256 MB
+maximum_object_size 4 MB
+minimum_object_size 0 KB
+maximum_object_size_in_memory 512 KB
+
+# Logging
+access_log /var/log/squid/access.log squid
+cache_log /var/log/squid/cache.log
+cache_store_log none
+
+# DNS
+dns_nameservers 8.8.8.8 8.8.4.4
+
+# Performance
+refresh_pattern ^ftp: 1440 20% 10080
+refresh_pattern ^gopher: 1440 0% 1440
+refresh_pattern -i (/cgi-bin/|\?) 0 0% 0
+refresh_pattern . 0 20% 4320
+
+# Coredumps
+coredump_dir /var/spool/squid
+
+# Shutdown
+shutdown_lifetime 10 seconds
+
+# Forwarding (can be configured to use Tor)
+# never_direct allow all
+# cache_peer 127.0.0.1 parent 9050 0 no-query no-digest default
+EOF
+
+    # Initialize cache directories
+    squid -z 2>/dev/null || true
+
+    systemctl enable squid
+    systemctl restart squid
+
+    # Wait for Squid
+    sleep 3
+
+    if systemctl is-active --quiet squid; then
+        log "Squid installed and running"
+    else
+        error "Squid failed to start"
+        journalctl -u squid -n 20
+        return 1
+    fi
+}
+
+#=============================================================================
+# User Management
+#=============================================================================
+
+add_proxy_user() {
+    local username="$1"
+
+    if [[ -z "$username" ]]; then
+        error "Username cannot be empty"
+        return 1
+    fi
+
+    # Check if user exists
+    if grep -q "^$username:" "$SQUID_USERS_FILE" 2>/dev/null; then
+        warning "User '$username' already exists"
+        read -p "Update password? (y/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            return 0
+        fi
+    fi
+
+    # Prompt for password
+    local password
+    while true; do
+        read -s -p "Enter password for '$username': " password
+        echo
+        read -s -p "Confirm password: " password_confirm
+        echo
+
+        if [[ "$password" == "$password_confirm" ]]; then
+            break
+        else
+            error "Passwords do not match. Try again."
+        fi
+    done
+
+    # Add or update user
+    htdigest "$SQUID_USERS_FILE" "TORtopus Proxy" "$username" <<< "$password" &>/dev/null
+
+    log "User '$username' added/updated successfully"
+}
+
+create_management_scripts() {
+    log "Creating management scripts..."
+
+    # tortopus-user script
+    cat > "$BIN_DIR/tortopus-user" << 'EOFUSER'
+#!/bin/bash
+# TORtopus User Management Script
+
+SQUID_USERS_FILE="/etc/squid/passwords"
+REALM="TORtopus Proxy"
+
+show_usage() {
+    echo "Usage: tortopus-user <command> [username]"
+    echo ""
+    echo "Commands:"
+    echo "  add <username>      Add a new proxy user"
+    echo "  remove <username>   Remove a proxy user"
+    echo "  list                List all proxy users"
+    echo "  passwd <username>   Change user password"
+    echo ""
+}
+
+add_user() {
+    local username="$1"
+    [[ -z "$username" ]] && { echo "Error: Username required"; exit 1; }
+
+    if grep -q "^$username:" "$SQUID_USERS_FILE" 2>/dev/null; then
+        echo "User '$username' already exists. Use 'passwd' to change password."
+        exit 1
+    fi
+
+    htdigest "$SQUID_USERS_FILE" "$REALM" "$username"
+    systemctl reload squid
+    echo "User '$username' added successfully"
+}
+
+remove_user() {
+    local username="$1"
+    [[ -z "$username" ]] && { echo "Error: Username required"; exit 1; }
+
+    if ! grep -q "^$username:" "$SQUID_USERS_FILE" 2>/dev/null; then
+        echo "User '$username' not found"
+        exit 1
+    fi
+
+    sed -i "/^$username:/d" "$SQUID_USERS_FILE"
+    systemctl reload squid
+    echo "User '$username' removed successfully"
+}
+
+list_users() {
+    if [[ ! -f "$SQUID_USERS_FILE" ]] || [[ ! -s "$SQUID_USERS_FILE" ]]; then
+        echo "No users configured"
+        exit 0
+    fi
+
+    echo "Configured proxy users:"
+    cut -d: -f1 "$SQUID_USERS_FILE" | sort | sed 's/^/  - /'
+}
+
+change_password() {
+    local username="$1"
+    [[ -z "$username" ]] && { echo "Error: Username required"; exit 1; }
+
+    if ! grep -q "^$username:" "$SQUID_USERS_FILE" 2>/dev/null; then
+        echo "User '$username' not found"
+        exit 1
+    fi
+
+    htdigest "$SQUID_USERS_FILE" "$REALM" "$username"
+    systemctl reload squid
+    echo "Password for '$username' changed successfully"
+}
+
+if [[ $EUID -ne 0 ]]; then
+    echo "This script must be run as root"
+    exit 1
+fi
+
+case "${1:-}" in
+    add)
+        add_user "$2"
+        ;;
+    remove)
+        remove_user "$2"
+        ;;
+    list)
+        list_users
+        ;;
+    passwd)
+        change_password "$2"
+        ;;
+    *)
+        show_usage
+        exit 1
+        ;;
+esac
+EOFUSER
+
+    chmod +x "$BIN_DIR/tortopus-user"
+
+    # tortopus-config script
+    cat > "$BIN_DIR/tortopus-config" << 'EOFCONFIG'
+#!/bin/bash
+# TORtopus Configuration Script
+
+SQUID_CONF="/etc/squid/squid.conf"
+
+show_usage() {
+    echo "Usage: tortopus-config --mode [direct|tor]"
+    echo ""
+    echo "Modes:"
+    echo "  direct  - Direct proxy (faster, no anonymity)"
+    echo "  tor     - Route through Tor (slower, anonymous)"
+    echo ""
+}
+
+enable_tor_mode() {
+    echo "Enabling Tor mode..."
+
+    # Check if already enabled
+    if grep -q "^cache_peer 127.0.0.1 parent 9050" "$SQUID_CONF"; then
+        echo "Tor mode already enabled"
+        exit 0
+    fi
+
+    # Backup
+    cp "$SQUID_CONF" "$SQUID_CONF.bak"
+
+    # Enable Tor forwarding
+    sed -i 's/^# never_direct allow all/never_direct allow all/' "$SQUID_CONF"
+    sed -i 's/^# cache_peer 127.0.0.1 parent 9050/cache_peer 127.0.0.1 parent 9050/' "$SQUID_CONF"
+
+    systemctl restart squid
+    echo "Tor mode enabled. All traffic will route through Tor."
+}
+
+enable_direct_mode() {
+    echo "Enabling direct mode..."
+
+    # Check if already disabled
+    if grep -q "^# cache_peer 127.0.0.1 parent 9050" "$SQUID_CONF"; then
+        echo "Direct mode already enabled"
+        exit 0
+    fi
+
+    # Backup
+    cp "$SQUID_CONF" "$SQUID_CONF.bak"
+
+    # Disable Tor forwarding
+    sed -i 's/^never_direct allow all/# never_direct allow all/' "$SQUID_CONF"
+    sed -i 's/^cache_peer 127.0.0.1 parent 9050/# cache_peer 127.0.0.1 parent 9050/' "$SQUID_CONF"
+
+    systemctl restart squid
+    echo "Direct mode enabled. Traffic will not route through Tor."
+}
+
+if [[ $EUID -ne 0 ]]; then
+    echo "This script must be run as root"
+    exit 1
+fi
+
+case "${1:-}" in
+    --mode)
+        case "${2:-}" in
+            tor)
+                enable_tor_mode
+                ;;
+            direct)
+                enable_direct_mode
+                ;;
+            *)
+                show_usage
+                exit 1
+                ;;
+        esac
+        ;;
+    *)
+        show_usage
+        exit 1
+        ;;
+esac
+EOFCONFIG
+
+    chmod +x "$BIN_DIR/tortopus-config"
+
+    # tortopus-rollback script
+    cat > "$BIN_DIR/tortopus-rollback" << 'EOFROLLBACK'
+#!/bin/bash
+# TORtopus Rollback Script
+
+BACKUP_DIR="/var/backups/tortopus"
+
+if [[ $EUID -ne 0 ]]; then
+    echo "This script must be run as root"
+    exit 1
+fi
+
+if [[ ! -d "$BACKUP_DIR" ]]; then
+    echo "No backups found at $BACKUP_DIR"
+    exit 1
+fi
+
+echo "Available backups:"
+ls -1 "$BACKUP_DIR"
+echo ""
+echo "WARNING: This will restore configuration files from backups."
+read -p "Continue? (y/n) " -n 1 -r
+echo
+
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Rollback cancelled"
+    exit 0
+fi
+
+# Restore SSH config
+if ls "$BACKUP_DIR"/sshd_config.backup.* 1> /dev/null 2>&1; then
+    latest_ssh=$(ls -t "$BACKUP_DIR"/sshd_config.backup.* | head -1)
+    cp "$latest_ssh" /etc/ssh/sshd_config
+    echo "Restored: /etc/ssh/sshd_config"
+fi
+
+# Restore Squid config
+if ls "$BACKUP_DIR"/squid.conf.backup.* 1> /dev/null 2>&1; then
+    latest_squid=$(ls -t "$BACKUP_DIR"/squid.conf.backup.* | head -1)
+    cp "$latest_squid" /etc/squid/squid.conf
+    echo "Restored: /etc/squid/squid.conf"
+fi
+
+# Restore Tor config
+if ls "$BACKUP_DIR"/torrc.backup.* 1> /dev/null 2>&1; then
+    latest_tor=$(ls -t "$BACKUP_DIR"/torrc.backup.* | head -1)
+    cp "$latest_tor" /etc/tor/torrc
+    echo "Restored: /etc/tor/torrc"
+fi
+
+echo ""
+echo "Rollback complete. Restart services manually if needed:"
+echo "  sudo systemctl restart sshd"
+echo "  sudo systemctl restart squid"
+echo "  sudo systemctl restart tor"
+EOFROLLBACK
+
+    chmod +x "$BIN_DIR/tortopus-rollback"
+
+    log "Management scripts created in $BIN_DIR"
+}
+
+#=============================================================================
+# Interactive Setup
+#=============================================================================
+
+interactive_setup() {
+    print_banner
+
+    echo "This installer will:"
+    echo "  1. Update system packages"
+    echo "  2. Install and configure security hardening (SSH, UFW, fail2ban)"
+    echo "  3. Install and configure Tor + Squid proxy"
+    echo "  4. Create proxy users"
+    echo ""
+
+    if ! confirm_action "Ready to begin installation?"; then
+        exit 0
+    fi
+
+    # System updates
+    log "=== Phase 1: System Updates ==="
+    update_system
+
+    # Security hardening
+    log "=== Phase 2: Security Hardening ==="
+    install_security_packages
+
+    if confirm_action "Configure SSH hardening? (Disable password auth, key-only)"; then
+        configure_ssh || {
+            error "SSH configuration failed. Aborting."
+            exit 1
+        }
+    fi
+
+    if confirm_action "Configure firewall (UFW)?"; then
+        configure_firewall
+    fi
+
+    if confirm_action "Configure fail2ban?"; then
+        configure_fail2ban
+    fi
+
+    if confirm_action "Enable automatic security updates?"; then
+        configure_auto_updates
+    fi
+
+    # Proxy installation
+    log "=== Phase 3: Proxy Installation ==="
+
+    if confirm_action "Install Tor?"; then
+        install_tor || {
+            error "Tor installation failed"
+            exit 1
+        }
+    fi
+
+    if confirm_action "Install Squid?"; then
+        install_squid || {
+            error "Squid installation failed"
+            exit 1
+        }
+    fi
+
+    # Create management scripts
+    create_management_scripts
+
+    # User creation
+    log "=== Phase 4: User Setup ==="
+
+    while true; do
+        read -p "Enter username for proxy access (or 'done' to finish): " username
+        [[ "$username" == "done" ]] && break
+        [[ -z "$username" ]] && continue
+
+        add_proxy_user "$username"
+    done
+
+    # Proxy mode selection
+    echo ""
+    echo "Proxy Mode Selection:"
+    echo "  1. Direct mode (faster, no anonymity)"
+    echo "  2. Tor mode (slower, anonymous)"
+    echo ""
+    read -p "Select mode (1 or 2): " mode_choice
+
+    case "$mode_choice" in
+        2)
+            "$BIN_DIR/tortopus-config" --mode tor
+            ;;
+        *)
+            "$BIN_DIR/tortopus-config" --mode direct
+            ;;
+    esac
+
+    # Final summary
+    echo ""
+    echo -e "${GREEN}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}   Installation Complete!${NC}"
+    echo -e "${GREEN}════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo "Configuration Summary:"
+    echo "  - SSH: Key-only authentication (password disabled)"
+    echo "  - Firewall: UFW enabled"
+    echo "  - Proxy: Squid on port 3128"
+    echo "  - Tor: SOCKS5 on port 9050"
+    echo "  - Backups: $BACKUP_DIR"
+    echo ""
+    echo "Management Commands:"
+    echo "  tortopus-user add <username>     - Add proxy user"
+    echo "  tortopus-user list               - List users"
+    echo "  tortopus-config --mode [direct|tor] - Switch proxy mode"
+    echo "  tortopus-rollback                - Restore backups"
+    echo ""
+    echo "Test Your Proxy:"
+    echo "  curl -x http://username:password@$(hostname -I | awk '{print $1}'):3128 https://ifconfig.me"
+    echo ""
+    echo -e "${YELLOW}IMPORTANT: SSH password authentication is now disabled.${NC}"
+    echo -e "${YELLOW}Ensure you can log in with your SSH key before closing this session!${NC}"
+    echo ""
+}
+
+#=============================================================================
+# Main
+#=============================================================================
+
+main() {
+    # Pre-flight checks
+    check_root
+    check_ubuntu
+    create_backup_dir
+
+    # Initialize log
+    touch "$INSTALL_LOG"
+    log "TORtopus installer started - Version $VERSION"
+
+    # Run interactive setup
+    interactive_setup
+
+    log "Installation completed successfully"
+}
+
+# Run main function
+main "$@"
