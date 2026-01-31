@@ -1,0 +1,15 @@
+[Unit]
+Description=TORtopus Web Dashboard
+After=network.target squid.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/tortopus-dashboard
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/bin/python3 /opt/tortopus-dashboard/app.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

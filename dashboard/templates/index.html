@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TORtopus Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .card h2 {
+            margin-bottom: 20px;
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .status-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .status-item h3 {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+        }
+
+        .status-item .value {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .status-active {
+            color: #28a745 !important;
+        }
+
+        .status-inactive {
+            color: #dc3545 !important;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #555;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .btn-warning {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .btn-warning:hover {
+            background: #e0a800;
+        }
+
+        .btn-small {
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+
+        .user-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .user-table th,
+        .user-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .user-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .user-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            color: #155724;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            border-left: 4px solid #dc3545;
+            color: #721c24;
+        }
+
+        .form-inline {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .form-inline .form-group {
+            flex: 1;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .refresh-btn {
+            float: right;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🐙 TORtopus Dashboard</h1>
+            <p>Proxy User Management & System Status</p>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- System Status -->
+        <div class="card">
+            <h2>
+                System Status
+                <button class="btn btn-primary btn-small refresh-btn" onclick="location.reload()">🔄 Refresh</button>
+            </h2>
+            <div class="status-grid">
+                <div class="status-item">
+                    <h3>Squid Proxy</h3>
+                    <div class="value status-{{ status.squid }}">
+                        {{ status.squid }}
+                    </div>
+                </div>
+                <div class="status-item">
+                    <h3>Tor Network</h3>
+                    <div class="value status-{{ status.tor }}">
+                        {{ status.tor }}
+                    </div>
+                </div>
+                <div class="status-item">
+                    <h3>fail2ban</h3>
+                    <div class="value status-{{ status.fail2ban }}">
+                        {{ status.fail2ban }}
+                    </div>
+                </div>
+                <div class="status-item">
+                    <h3>UFW Firewall</h3>
+                    <div class="value status-{{ status.ufw }}">
+                        {{ status.ufw }}
+                    </div>
+                </div>
+                <div class="status-item">
+                    <h3>Total Users</h3>
+                    <div class="value">
+                        {{ status.user_count }}
+                    </div>
+                </div>
+                <div class="status-item">
+                    <h3>Last Updated</h3>
+                    <div class="value" style="font-size: 0.9em;">
+                        {{ status.timestamp }}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add New User -->
+        <div class="card">
+            <h2>➕ Add New User</h2>
+            <form method="POST" action="{{ url_for('add_user') }}">
+                <div class="form-inline">
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" name="username" placeholder="Enter username" required pattern="[a-zA-Z0-9_]+" title="Only letters, numbers, and underscores">
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password" placeholder="Enter password" required minlength="6">
+                    </div>
+                    <div class="form-group">
+                        <button type="submit" class="btn btn-primary">Add User</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <!-- User List -->
+        <div class="card">
+            <h2>👥 Proxy Users ({{ users|length }})</h2>
+
+            {% if users %}
+                <table class="user-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Username</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user in users %}
+                        <tr>
+                            <td>{{ loop.index }}</td>
+                            <td><strong>{{ user }}</strong></td>
+                            <td>
+                                <button class="btn btn-warning btn-small" onclick="changePassword('{{ user }}')">
+                                    🔑 Change Password
+                                </button>
+                                <form method="POST" action="{{ url_for('remove_user', username=user) }}" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete user {{ user }}?')">
+                                    <button type="submit" class="btn btn-danger btn-small">
+                                        🗑️ Delete
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <div class="empty-state">
+                    <p>No users configured yet. Add your first user above!</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Change Password Modal (Simple) -->
+    <script>
+        function changePassword(username) {
+            const newPassword = prompt(`Enter new password for user: ${username}`);
+            if (newPassword && newPassword.length >= 6) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '{{ url_for("change_password") }}';
+
+                const usernameInput = document.createElement('input');
+                usernameInput.type = 'hidden';
+                usernameInput.name = 'username';
+                usernameInput.value = username;
+
+                const passwordInput = document.createElement('input');
+                passwordInput.type = 'hidden';
+                passwordInput.name = 'new_password';
+                passwordInput.value = newPassword;
+
+                form.appendChild(usernameInput);
+                form.appendChild(passwordInput);
+                document.body.appendChild(form);
+                form.submit();
+            } else if (newPassword !== null) {
+                alert('Password must be at least 6 characters long');
+            }
+        }
+    </script>
+</body>
+</html>
