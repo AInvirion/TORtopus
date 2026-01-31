@@ -124,11 +124,20 @@ export https_proxy="http://username:password@your-server:3128"
 ### Testing the Connection
 
 ```bash
-# Test direct proxy
-curl -x http://username:password@your-server:3128 https://ifconfig.me
+# Test HTTP proxy (recommended method)
+curl --proxy-anyauth -x 'http://username:password@your-server:3128' https://ifconfig.me
 
-# Test Tor proxy (using SOCKS5)
+# Alternative: Explicit basic auth
+curl --proxy-basic --proxy-user 'username:password' -x http://your-server:3128 https://ifconfig.me
+
+# For passwords with special characters, use URL encoding or quotes
+curl --proxy-anyauth -x 'http://user:p@ssw0rd!@your-server:3128' https://ifconfig.me
+
+# Test Tor proxy (SOCKS5 - requires PySocks or similar)
 curl --socks5 username:password@your-server:9050 https://check.torproject.org
+
+# Use Python test script (easiest)
+python3 test-tortopus.py -s your-server -u username -p 'password'
 ```
 
 ## Proxy Modes
