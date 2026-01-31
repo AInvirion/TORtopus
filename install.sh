@@ -566,13 +566,11 @@ install_squid() {
 # HTTP port
 http_port 3128
 
-# Authentication
-auth_param digest program /usr/lib/squid/digest_file_auth -c /etc/squid/passwords
-auth_param digest children 5
-auth_param digest realm TORtopus Proxy
-auth_param digest nonce_garbage_interval 5 minutes
-auth_param digest nonce_max_duration 30 minutes
-auth_param digest nonce_max_count 50
+# Authentication - Basic (better CONNECT tunnel compatibility)
+auth_param basic program /usr/lib/squid/basic_ncsa_auth /etc/squid/passwords
+auth_param basic children 5
+auth_param basic realm TORtopus Proxy
+auth_param basic credentialsttl 2 hours
 
 # ACLs
 acl authenticated proxy_auth REQUIRED
@@ -688,8 +686,14 @@ add_proxy_user() {
         fi
     done
 
-    # Add or update user
-    htdigest "$SQUID_USERS_FILE" "TORtopus Proxy" "$username" <<< "$password" &>/dev/null
+    # Add or update user with htpasswd
+    if grep -q "^$username:" "$SQUID_USERS_FILE" 2>/dev/null; then
+        # Update existing user
+        htpasswd -b "$SQUID_USERS_FILE" "$username" "$password" &>/dev/null
+    else
+        # Add new user
+        htpasswd -b "$SQUID_USERS_FILE" "$username" "$password" &>/dev/null
+    fi
 
     log "User '$username' added/updated successfully"
 }
@@ -725,7 +729,7 @@ add_user() {
         exit 1
     fi
 
-    htdigest "$SQUID_USERS_FILE" "$REALM" "$username"
+    htpasswd -c "$SQUID_USERS_FILE" "$username"
     systemctl reload squid
     echo "User '$username' added successfully"
 }
@@ -763,7 +767,7 @@ change_password() {
         exit 1
     fi
 
-    htdigest "$SQUID_USERS_FILE" "$REALM" "$username"
+    htpasswd "$SQUID_USERS_FILE" "$username"
     systemctl reload squid
     echo "Password for '$username' changed successfully"
 }
