@@ -919,6 +919,28 @@ EOFROLLBACK
 
     chmod +x "$BIN_DIR/tortopus-rollback"
 
+    # tortopus-diagnostic script
+    log "Installing diagnostic tool..."
+
+    # Copy diagnostic script if it exists alongside installer
+    if [[ -f "$SCRIPT_DIR/tortopus-diagnostic.sh" ]]; then
+        cp "$SCRIPT_DIR/tortopus-diagnostic.sh" "$BIN_DIR/tortopus-diagnostic"
+        chmod +x "$BIN_DIR/tortopus-diagnostic"
+        log "Diagnostic tool installed from local file"
+    else
+        # If not available locally, download from GitHub
+        if command -v curl &>/dev/null; then
+            if curl -sSL https://raw.githubusercontent.com/AInvirion/TORtopus/main/tortopus-diagnostic.sh -o "$BIN_DIR/tortopus-diagnostic" 2>/dev/null; then
+                chmod +x "$BIN_DIR/tortopus-diagnostic"
+                log "Diagnostic tool downloaded from GitHub"
+            else
+                warning "Could not download diagnostic tool - will be available in next release"
+            fi
+        else
+            warning "curl not available - diagnostic tool not installed"
+        fi
+    fi
+
     log "Management scripts created in $BIN_DIR"
 }
 
@@ -1029,10 +1051,11 @@ interactive_setup() {
     echo "  - Backups: $BACKUP_DIR"
     echo ""
     echo "Management Commands:"
-    echo "  tortopus-user add <username>     - Add proxy user"
-    echo "  tortopus-user list               - List users"
+    echo "  tortopus-user add <username>        - Add proxy user"
+    echo "  tortopus-user list                  - List users"
     echo "  tortopus-config --mode [direct|tor] - Switch proxy mode"
-    echo "  tortopus-rollback                - Restore backups"
+    echo "  tortopus-diagnostic                 - Run system health check"
+    echo "  tortopus-rollback                   - Restore backups"
     echo ""
     echo "Test Your Proxy:"
     echo "  curl -x http://username:password@$(hostname -I | awk '{print $1}'):3128 https://ifconfig.me"
