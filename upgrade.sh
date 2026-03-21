@@ -256,6 +256,13 @@ update_dashboard() {
         warn "Could not download index.html"
     fi
 
+    if curl -sSL "${REPO_URL}/dashboard/templates/connections.html" -o "/tmp/connections.html.new" 2>/dev/null; then
+        mv "/tmp/connections.html.new" "$dashboard_dir/templates/connections.html"
+        log "Updated: templates/connections.html"
+    else
+        warn "Could not download connections.html"
+    fi
+
     # Restart dashboard service if running
     if systemctl is-active --quiet tortopus-dashboard 2>/dev/null; then
         log "Restarting dashboard service..."
