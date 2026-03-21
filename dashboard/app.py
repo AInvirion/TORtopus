@@ -17,6 +17,7 @@ app.secret_key = os.urandom(24)  # Change this to a fixed secret in production
 # Configuration
 SQUID_PASSWORDS_FILE = '/etc/squid/passwords'
 SQUID_CONFIG_FILE = '/etc/squid/squid.conf'
+SQUID_ACCESS_LOG = '/var/log/squid/access.log'
 DASHBOARD_USER = 'admin'
 DASHBOARD_PASSWORD = 'changeme123'  # CHANGE THIS!
 
@@ -175,6 +176,137 @@ def set_proxy_mode(mode):
     else:
         return False, f"Failed to change mode: {stderr}"
 
+def parse_squid_log_line(line):
+    """Parse a single Squid access log line"""
+    try:
+        parts = line.split()
+        if len(parts) < 10:
+            return None
+
+        # Parse timestamp (Unix epoch with milliseconds)
+        timestamp = float(parts[0])
+        dt = datetime.fromtimestamp(timestamp)
+
+        # Parse result code (e.g., TCP_MISS/200)
+        result_parts = parts[3].split('/')
+        squid_code = result_parts[0] if len(result_parts) > 0 else 'UNKNOWN'
+        http_code = result_parts[1] if len(result_parts) > 1 else '0'
+
+        # Determine if successful (2xx or 3xx status codes)
+        try:
+            http_code_int = int(http_code)
+            is_success = 200 <= http_code_int < 400
+        except:
+            is_success = False
+
+        return {
+            'timestamp': dt.strftime('%Y-%m-%d %H:%M:%S'),
+            'elapsed_ms': parts[1],
+            'client_ip': parts[2],
+            'squid_code': squid_code,
+            'http_code': http_code,
+            'is_success': is_success,
+            'size': parts[4],
+            'method': parts[5],
+            'url': parts[6][:80] + '...' if len(parts[6]) > 80 else parts[6],
+            'full_url': parts[6],
+            'user': parts[7] if parts[7] != '-' else 'anonymous',
+            'peer': parts[8] if len(parts) > 8 else '-',
+        }
+    except Exception as e:
+        return None
+
+def get_recent_connections(limit=100, filter_user=None, filter_status=None):
+    """Get recent connections from Squid access log"""
+    connections = []
+
+    try:
+        if not os.path.exists(SQUID_ACCESS_LOG):
+            return connections
+
+        # Read last N lines efficiently using tail
+        success, stdout, stderr = run_command(f'tail -n {limit * 2} "{SQUID_ACCESS_LOG}"')
+
+        if not success or not stdout:
+            return connections
+
+        lines = stdout.strip().split('\n')
+
+        for line in reversed(lines):  # Most recent first
+            if len(connections) >= limit:
+                break
+
+            parsed = parse_squid_log_line(line)
+            if parsed:
+                # Apply filters
+                if filter_user and parsed['user'] != filter_user:
+                    continue
+                if filter_status == 'success' and not parsed['is_success']:
+                    continue
+                if filter_status == 'failed' and parsed['is_success']:
+                    continue
+
+                connections.append(parsed)
+
+        return connections
+    except Exception as e:
+        print(f"Error reading access log: {e}")
+        return connections
+
+def get_connection_stats():
+    """Get connection statistics"""
+    stats = {
+        'total_today': 0,
+        'successful': 0,
+        'failed': 0,
+        'unique_ips': set(),
+        'by_user': {},
+        'by_status': {}
+    }
+
+    try:
+        if not os.path.exists(SQUID_ACCESS_LOG):
+            return stats
+
+        # Get today's date
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        # Read recent log entries
+        success, stdout, stderr = run_command(f'tail -n 1000 "{SQUID_ACCESS_LOG}"')
+
+        if not success or not stdout:
+            return stats
+
+        for line in stdout.strip().split('\n'):
+            parsed = parse_squid_log_line(line)
+            if not parsed:
+                continue
+
+            # Only count today's entries
+            if parsed['timestamp'].startswith(today):
+                stats['total_today'] += 1
+                stats['unique_ips'].add(parsed['client_ip'])
+
+                if parsed['is_success']:
+                    stats['successful'] += 1
+                else:
+                    stats['failed'] += 1
+
+                # Count by user
+                user = parsed['user']
+                stats['by_user'][user] = stats['by_user'].get(user, 0) + 1
+
+                # Count by HTTP status
+                http_code = parsed['http_code']
+                stats['by_status'][http_code] = stats['by_status'].get(http_code, 0) + 1
+
+        stats['unique_ips'] = len(stats['unique_ips'])
+
+    except Exception as e:
+        print(f"Error getting stats: {e}")
+
+    return stats
+
 def get_system_status():
     """Get system and service status"""
     status = {
@@ -284,6 +416,47 @@ def change_proxy_mode(mode):
     success, message = set_proxy_mode(mode)
     flash(message, 'success' if success else 'error')
     return redirect(url_for('index'))
+
+@app.route('/connections')
+@requires_auth
+def connections():
+    """View recent proxy connections"""
+    # Get filter parameters
+    filter_user = request.args.get('user', None)
+    filter_status = request.args.get('status', None)
+    limit = int(request.args.get('limit', 100))
+
+    # Cap limit at 500
+    limit = min(limit, 500)
+
+    recent_connections = get_recent_connections(limit, filter_user, filter_status)
+    stats = get_connection_stats()
+    users = get_proxy_users()
+
+    return render_template('connections.html',
+                           connections=recent_connections,
+                           stats=stats,
+                           users=users,
+                           filter_user=filter_user,
+                           filter_status=filter_status,
+                           limit=limit)
+
+@app.route('/api/connections')
+@requires_auth
+def api_connections():
+    """API endpoint for connections"""
+    filter_user = request.args.get('user', None)
+    filter_status = request.args.get('status', None)
+    limit = int(request.args.get('limit', 100))
+    limit = min(limit, 500)
+
+    connections = get_recent_connections(limit, filter_user, filter_status)
+    stats = get_connection_stats()
+
+    return jsonify({
+        'connections': connections,
+        'stats': stats
+    })
 
 if __name__ == '__main__':
     # Check if running as root
