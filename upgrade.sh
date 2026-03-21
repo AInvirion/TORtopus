@@ -321,6 +321,58 @@ update_diagnostic() {
 }
 
 #=============================================================================
+# Update Dashboard
+#=============================================================================
+
+update_dashboard() {
+    local dashboard_dir="/opt/tortopus-dashboard"
+
+    # Check if dashboard is installed
+    if [[ ! -d "$dashboard_dir" ]]; then
+        info "Dashboard not installed, skipping dashboard update"
+        return 0
+    fi
+
+    log "Updating dashboard..."
+
+    # Backup current files
+    if [[ -f "$dashboard_dir/app.py" ]]; then
+        cp "$dashboard_dir/app.py" "$BACKUP_DIR/dashboard-app.py.backup.$(date +%Y%m%d%H%M%S)"
+    fi
+
+    # Download new dashboard files
+    if curl -sSL "${REPO_URL}/dashboard/app.py" -o "/tmp/app.py.new" 2>/dev/null; then
+        mv "/tmp/app.py.new" "$dashboard_dir/app.py"
+        log "Updated: app.py"
+    else
+        warn "Could not download app.py"
+    fi
+
+    # Create templates directory if needed
+    mkdir -p "$dashboard_dir/templates"
+
+    if curl -sSL "${REPO_URL}/dashboard/templates/index.html" -o "/tmp/index.html.new" 2>/dev/null; then
+        mv "/tmp/index.html.new" "$dashboard_dir/templates/index.html"
+        log "Updated: templates/index.html"
+    else
+        warn "Could not download index.html"
+    fi
+
+    # Restart dashboard service if running
+    if systemctl is-active --quiet tortopus-dashboard 2>/dev/null; then
+        log "Restarting dashboard service..."
+        systemctl restart tortopus-dashboard
+        if systemctl is-active --quiet tortopus-dashboard; then
+            log "Dashboard restarted successfully"
+        else
+            warn "Dashboard failed to restart"
+        fi
+    else
+        info "Dashboard service not running (start with: systemctl start tortopus-dashboard)"
+    fi
+}
+
+#=============================================================================
 # Main Upgrade Process
 #=============================================================================
 
@@ -339,7 +391,11 @@ main() {
     update_diagnostic
 
     echo ""
-    log "=== Phase 4: Verifying Services ==="
+    log "=== Phase 4: Updating Dashboard ==="
+    update_dashboard
+
+    echo ""
+    log "=== Phase 5: Verifying Services ==="
 
     local services_ok=true
 
@@ -369,13 +425,19 @@ main() {
     echo "What's new:"
     echo "  - Added Privoxy as HTTP-to-SOCKS bridge for proper Tor routing"
     echo "  - Fixed HTTPS support through the proxy"
-    echo "  - Updated management scripts"
+    echo "  - Updated management scripts and diagnostic tool"
+    echo "  - Dashboard now shows proxy mode (Direct/Tor) with switching buttons"
     echo ""
     echo "Test your proxy:"
     echo "  curl -x http://USER:PASS@127.0.0.1:3128 https://ifconfig.me"
     echo ""
-    echo "Switch to Tor mode:"
-    echo "  tortopus-config --mode tor"
+    echo "Switch proxy mode:"
+    echo "  tortopus-config --mode tor      # Route through Tor"
+    echo "  tortopus-config --mode direct   # Direct connection"
+    echo ""
+    echo "Dashboard management:"
+    echo "  systemctl status tortopus-dashboard   # Check status"
+    echo "  systemctl restart tortopus-dashboard  # Restart"
     echo ""
     echo "Run diagnostics:"
     echo "  tortopus-diagnostic"
