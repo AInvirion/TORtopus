@@ -277,35 +277,60 @@ sudo chown -R debian-tor:debian-tor /var/lib/tor
 sudo systemctl restart tor
 ```
 
+### HTTPS Returns 501 Error
+
+**Symptoms:** `curl: (56) Received HTTP code 501 from proxy after CONNECT`
+
+**Cause:** Old TORtopus versions tried to use Tor's SOCKS port (9050) directly from Squid, but Squid cannot speak SOCKS.
+
+**Solution:**
+
+```bash
+# Upgrade to latest version (installs Privoxy as HTTP-to-SOCKS bridge)
+curl -sSL https://raw.githubusercontent.com/AInvirion/TORtopus/main/upgrade.sh | sudo bash
+
+# Or manually install Privoxy
+sudo apt install privoxy
+echo "forward-socks5 / 127.0.0.1:9050 ." | sudo tee -a /etc/privoxy/config
+sudo systemctl restart privoxy
+
+# Update Squid config to use Privoxy (port 8118) instead of Tor directly
+sudo sed -i 's/cache_peer 127.0.0.1 parent 9050/cache_peer 127.0.0.1 parent 8118/g' /etc/squid/squid.conf
+sudo systemctl restart squid
+```
+
 ### Proxy Not Routing Through Tor
 
 **Symptoms:** In Tor mode but seeing regular IP instead of Tor exit.
 
 **Causes:**
 1. Squid not configured for Tor mode
-2. Tor not running
+2. Tor or Privoxy not running
 3. Cache peer configuration missing
 
 **Solutions:**
 
 ```bash
-# Verify Tor mode is enabled
-sudo grep "cache_peer.*9050" /etc/squid/squid.conf
+# Verify Tor mode is enabled (should show port 8118 for Privoxy)
+sudo grep "cache_peer.*8118" /etc/squid/squid.conf
 
 # If not found, switch to Tor mode
 sudo tortopus-config --mode tor
 
-# Verify Tor is running
-sudo systemctl status tor
+# Verify all services are running
+sudo systemctl status tor privoxy squid
 
-# Test Tor directly
+# Test Tor directly (bypassing Squid)
 curl --socks5 127.0.0.1:9050 https://ifconfig.me
 
-# Restart Squid
-sudo systemctl restart squid
+# Test Privoxy (HTTP to SOCKS bridge)
+curl -x http://127.0.0.1:8118 https://ifconfig.me
+
+# Restart services
+sudo systemctl restart tor privoxy squid
 
 # Test proxy
-curl --proxy-anyauth -x 'http://user:pass@server:3128' https://check.torproject.org
+curl -x 'http://user:pass@server:3128' https://check.torproject.org
 ```
 
 ## fail2ban Issues
@@ -436,8 +461,8 @@ sudo ufw --force reset
 **Solutions:**
 
 ```bash
-# Check if in Tor mode
-sudo grep "cache_peer.*9050" /etc/squid/squid.conf
+# Check if in Tor mode (port 8118 = Privoxy = Tor mode)
+sudo grep "cache_peer.*8118" /etc/squid/squid.conf
 
 # Switch to direct mode for speed
 sudo tortopus-config --mode direct

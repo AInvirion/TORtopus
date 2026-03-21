@@ -191,36 +191,15 @@ fix_squid_config() {
 update_scripts() {
     log "Updating management scripts..."
 
-    local scripts=(
-        "tortopus-user"
-        "tortopus-config"
-        "tortopus-rollback"
-        "tortopus-diagnostic"
-    )
-
-    for script in "${scripts[@]}"; do
-        info "Updating $script..."
-
-        # Download new version
-        if curl -sSL "${REPO_URL}/tools/${script}" -o "/tmp/${script}.new" 2>/dev/null; then
-            # Backup old version if exists
-            if [[ -f "${BIN_DIR}/${script}" ]]; then
-                cp "${BIN_DIR}/${script}" "$BACKUP_DIR/${script}.backup.$(date +%Y%m%d%H%M%S)"
-            fi
-
-            # Install new version
-            mv "/tmp/${script}.new" "${BIN_DIR}/${script}"
-            chmod +x "${BIN_DIR}/${script}"
-            log "Updated: $script"
-        else
-            # Try alternate location (embedded in install.sh)
-            warn "Could not download $script from tools/, will regenerate from install.sh"
-        fi
-    done
-
-    # If tools directory doesn't exist, regenerate from install.sh
-    if [[ ! -x "${BIN_DIR}/tortopus-config" ]] || ! grep -q "8118" "${BIN_DIR}/tortopus-config" 2>/dev/null; then
+    # tortopus-config needs to be regenerated with Privoxy support
+    # Check if current version uses old port 9050 or doesn't exist
+    if [[ ! -x "${BIN_DIR}/tortopus-config" ]] || grep -q "9050" "${BIN_DIR}/tortopus-config" 2>/dev/null; then
         log "Regenerating tortopus-config with Privoxy support..."
+
+        # Backup old version if exists
+        if [[ -f "${BIN_DIR}/tortopus-config" ]]; then
+            cp "${BIN_DIR}/tortopus-config" "$BACKUP_DIR/tortopus-config.backup.$(date +%Y%m%d%H%M%S)"
+        fi
 
         cat > "${BIN_DIR}/tortopus-config" << 'EOFCONFIG'
 #!/bin/bash

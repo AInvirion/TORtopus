@@ -90,6 +90,12 @@ The installer updates all system packages to ensure latest security patches.
 - Sets up control port for management
 - Enables and starts service
 
+**Privoxy Installation**
+- Installs Privoxy (HTTP-to-SOCKS bridge)
+- Configures to forward HTTP requests to Tor SOCKS
+- Listens on localhost:8118
+- Required for HTTPS support through Squid
+
 **Squid Installation**
 - Installs Squid proxy
 - Configures HTTP port 3128
@@ -121,7 +127,7 @@ Choose between:
 
 ```bash
 # Check service status
-sudo systemctl status squid tor fail2ban
+sudo systemctl status squid tor privoxy fail2ban
 
 # Run diagnostic
 sudo tortopus-diagnostic

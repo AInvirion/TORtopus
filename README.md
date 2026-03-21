@@ -27,6 +27,7 @@ TORtopus is an automated security hardening and proxy configuration tool for Ubu
 
 **Proxy Capabilities**
 - Dual-mode proxy: Direct or Tor-routed traffic
+- Full HTTPS support via Privoxy HTTP-to-SOCKS bridge
 - Multi-user authentication with alphanumeric password support
 - Auto-generated first user credentials
 - HTTP proxy (port 3128) and SOCKS5 (port 9050)
@@ -49,6 +50,12 @@ wget https://raw.githubusercontent.com/AInvirion/TORtopus/main/install.sh
 # Make executable and run
 chmod +x install.sh
 sudo ./install.sh
+```
+
+### Upgrading Existing Installation
+
+```bash
+curl -sSL https://raw.githubusercontent.com/AInvirion/TORtopus/main/upgrade.sh | sudo bash
 ```
 
 The installer is interactive and will guide you through:

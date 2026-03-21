@@ -8,12 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned
-- Support for custom SSH ports
 - IPv6 support
 - Advanced Tor circuit configuration
-- Web-based administration panel
 - Docker deployment option
 - Ansible playbook version
+
+## [1.1.0] - 2026-03-21
+
+### Added
+- Privoxy as HTTP-to-SOCKS bridge for proper Tor routing
+- `upgrade.sh` script for upgrading existing installations
+- Privoxy service and port checks in diagnostic tools
+
+### Fixed
+- **HTTPS proxy support**: Fixed 501 error on CONNECT requests when using Tor mode
+  - Squid cannot speak SOCKS directly to Tor's port 9050
+  - Now routes: Squid (HTTP) → Privoxy (8118) → Tor (SOCKS 9050)
+- Updated `tortopus-config` to manage Privoxy when switching modes
+- Fixed `local` keyword used outside functions in diagnostic script
+
+### Changed
+- `cache_peer` now uses port 8118 (Privoxy) instead of 9050 (Tor) directly
+- Updated all verification and diagnostic scripts to check Privoxy
+
+### Upgrade
+Existing installations can upgrade with:
+```bash
+curl -sSL https://raw.githubusercontent.com/AInvirion/TORtopus/main/upgrade.sh | sudo bash
+```
 
 ## [1.0.0] - 2026-01-31
 

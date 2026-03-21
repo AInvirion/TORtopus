@@ -55,10 +55,26 @@ http_access allow authenticated
 
 **Tor Mode Configuration:**
 ```
-# Route through Tor
-cache_peer 127.0.0.1 parent 9050 0 no-query no-digest proxy-only
+# Route through Tor (via Privoxy HTTP-to-SOCKS bridge)
+cache_peer 127.0.0.1 parent 8118 0 no-query no-digest default
 never_direct allow all
 ```
+
+Note: Squid cannot speak SOCKS directly. Traffic flows: Squid → Privoxy (8118) → Tor (9050)
+
+### Privoxy Configuration
+
+**Location:** `/etc/privoxy/config`
+
+```
+# Listen on localhost only
+listen-address 127.0.0.1:8118
+
+# Forward all traffic to Tor SOCKS proxy
+forward-socks5 / 127.0.0.1:9050 .
+```
+
+**Backup:** `/var/backups/tortopus/privoxy.config.backup.*`
 
 **Access Logging:**
 ```
