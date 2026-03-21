@@ -286,7 +286,6 @@ main() {
     echo ""
     log "=== Phase 3: Updating Management Scripts ==="
     update_scripts
-    update_diagnostic
 
     echo ""
     log "=== Phase 4: Updating Dashboard ==="
