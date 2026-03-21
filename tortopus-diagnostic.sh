@@ -170,6 +170,7 @@ check_service "sshd" "SSH Server"
 check_service "ufw" "UFW Firewall"
 check_service "fail2ban" "fail2ban"
 check_service "tor" "Tor"
+check_service "privoxy" "Privoxy (Tor bridge)"
 check_service "squid" "Squid Proxy"
 
 #=============================================================================
@@ -207,6 +208,7 @@ SSH_PORT=${SSH_PORT:-22}
 check_port "$SSH_PORT" "SSH" "sshd"
 check_port "3128" "Squid Proxy" "squid"
 check_port "9050" "Tor SOCKS5" "tor"
+check_port "8118" "Privoxy HTTP" "privoxy"
 
 #=============================================================================
 # Firewall Configuration
@@ -377,7 +379,7 @@ if [[ -f /etc/squid/squid.conf ]]; then
     fi
 
     # Check Tor integration
-    if grep -q "^cache_peer 127.0.0.1 parent 9050" /etc/squid/squid.conf; then
+    if grep -q "^cache_peer 127.0.0.1 parent 8118" /etc/squid/squid.conf; then
         check_info "Squid configured to route through Tor"
     else
         check_info "Squid in direct mode (not routing through Tor)"
@@ -525,8 +527,8 @@ if command -v curl &>/dev/null && systemctl is-active --quiet squid 2>/dev/null;
             fi
 
             # Check proxy mode
-            if grep -q "^cache_peer.*parent 9050" /etc/squid/squid.conf 2>/dev/null; then
-                check_info "Proxy Mode: Tor (routing through Tor network)"
+            if grep -q "^cache_peer.*parent 8118" /etc/squid/squid.conf 2>/dev/null; then
+                check_info "Proxy Mode: Tor (Squid -> Privoxy -> Tor)"
             else
                 check_info "Proxy Mode: Direct (not routing through Tor)"
             fi

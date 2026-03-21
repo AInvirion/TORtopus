@@ -605,6 +605,48 @@ EOF
     fi
 }
 
+install_privoxy() {
+    log "Installing Privoxy (HTTP-to-SOCKS bridge for Tor)..."
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y -qq privoxy
+
+    backup_file /etc/privoxy/config
+
+    # Configure Privoxy to forward to Tor SOCKS
+    cat > /etc/privoxy/config << 'EOF'
+# TORtopus Privoxy Configuration
+# Bridges HTTP (from Squid) to SOCKS5 (Tor)
+
+# Listen on localhost only
+listen-address 127.0.0.1:8118
+
+# Forward all traffic to Tor SOCKS proxy
+forward-socks5 / 127.0.0.1:9050 .
+
+# Disable logging for privacy
+logfile /var/log/privoxy/logfile
+debug 0
+
+# Performance settings
+keep-alive-timeout 300
+socket-timeout 300
+EOF
+
+    systemctl enable privoxy
+    systemctl restart privoxy
+
+    sleep 2
+
+    if systemctl is-active --quiet privoxy; then
+        log "Privoxy installed and running"
+    else
+        error "Privoxy failed to start"
+        journalctl -u privoxy -n 20
+        return 1
+    fi
+}
+
 install_squid() {
     log "Installing Squid..."
 
@@ -685,9 +727,9 @@ coredump_dir /var/spool/squid
 # Shutdown
 shutdown_lifetime 10 seconds
 
-# Forwarding (can be configured to use Tor)
+# Forwarding through Tor (via Privoxy HTTP-to-SOCKS bridge)
 # never_direct allow all
-# cache_peer 127.0.0.1 parent 9050 0 no-query no-digest default
+# cache_peer 127.0.0.1 parent 8118 0 no-query no-digest default
 EOF
 
     # Initialize cache directories
@@ -890,27 +932,37 @@ enable_tor_mode() {
     echo "Enabling Tor mode..."
 
     # Check if already enabled
-    if grep -q "^cache_peer 127.0.0.1 parent 9050" "$SQUID_CONF"; then
+    if grep -q "^cache_peer 127.0.0.1 parent 8118" "$SQUID_CONF"; then
         echo "Tor mode already enabled"
         exit 0
+    fi
+
+    # Ensure Privoxy and Tor are running
+    if ! systemctl is-active --quiet privoxy; then
+        echo "Starting Privoxy..."
+        systemctl start privoxy
+    fi
+    if ! systemctl is-active --quiet tor; then
+        echo "Starting Tor..."
+        systemctl start tor
     fi
 
     # Backup
     cp "$SQUID_CONF" "$SQUID_CONF.bak"
 
-    # Enable Tor forwarding
+    # Enable Tor forwarding (via Privoxy)
     sed -i 's/^# never_direct allow all/never_direct allow all/' "$SQUID_CONF"
-    sed -i 's/^# cache_peer 127.0.0.1 parent 9050/cache_peer 127.0.0.1 parent 9050/' "$SQUID_CONF"
+    sed -i 's/^# cache_peer 127.0.0.1 parent 8118/cache_peer 127.0.0.1 parent 8118/' "$SQUID_CONF"
 
     systemctl restart squid
-    echo "Tor mode enabled. All traffic will route through Tor."
+    echo "Tor mode enabled. All traffic will route through Tor (via Privoxy)."
 }
 
 enable_direct_mode() {
     echo "Enabling direct mode..."
 
     # Check if already disabled
-    if grep -q "^# cache_peer 127.0.0.1 parent 9050" "$SQUID_CONF"; then
+    if grep -q "^# cache_peer 127.0.0.1 parent 8118" "$SQUID_CONF"; then
         echo "Direct mode already enabled"
         exit 0
     fi
@@ -920,7 +972,7 @@ enable_direct_mode() {
 
     # Disable Tor forwarding
     sed -i 's/^never_direct allow all/# never_direct allow all/' "$SQUID_CONF"
-    sed -i 's/^cache_peer 127.0.0.1 parent 9050/# cache_peer 127.0.0.1 parent 9050/' "$SQUID_CONF"
+    sed -i 's/^cache_peer 127.0.0.1 parent 8118/# cache_peer 127.0.0.1 parent 8118/' "$SQUID_CONF"
 
     systemctl restart squid
     echo "Direct mode enabled. Traffic will not route through Tor."
@@ -1090,6 +1142,11 @@ interactive_setup() {
     if confirm_action "Install Tor?"; then
         install_tor || {
             error "Tor installation failed"
+            exit 1
+        }
+        # Install Privoxy as HTTP-to-SOCKS bridge for Tor
+        install_privoxy || {
+            error "Privoxy installation failed"
             exit 1
         }
     fi
