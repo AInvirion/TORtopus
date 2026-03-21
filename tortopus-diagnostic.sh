@@ -99,14 +99,14 @@ fi
 
 print_section "System Resources"
 # Memory usage
-local mem_total=$(free -h | awk '/^Mem:/ {print $2}')
-local mem_used=$(free -h | awk '/^Mem:/ {print $3}')
-local mem_percent=$(free | awk '/^Mem:/ {printf "%.1f", $3/$2 * 100}')
+mem_total=$(free -h | awk '/^Mem:/ {print $2}')
+mem_used=$(free -h | awk '/^Mem:/ {print $3}')
+mem_percent=$(free | awk '/^Mem:/ {printf "%.1f", $3/$2 * 100}')
 check_info "Memory: $mem_used / $mem_total (${mem_percent}% used)"
 
 # Disk usage
-local disk_usage=$(df -h / | awk 'NR==2 {print $5}' | tr -d '%')
-local disk_info=$(df -h / | awk 'NR==2 {print $3 " / " $2}')
+disk_usage=$(df -h / | awk 'NR==2 {print $5}' | tr -d '%')
+disk_info=$(df -h / | awk 'NR==2 {print $3 " / " $2}')
 check_info "Disk: $disk_info (${disk_usage}% used)"
 
 if [[ "$disk_usage" -gt 90 ]]; then
@@ -116,7 +116,7 @@ elif [[ "$disk_usage" -gt 80 ]]; then
 fi
 
 # Load average
-local load_avg=$(uptime | awk -F'load average:' '{print $2}' | xargs)
+load_avg=$(uptime | awk -F'load average:' '{print $2}' | xargs)
 check_info "Load Average: $load_avg"
 
 #=============================================================================
@@ -239,8 +239,8 @@ if command -v ufw &>/dev/null; then
         fi
 
         # Show default policies
-        local default_in=$(ufw status verbose | grep "Default:" | grep -oP "deny \(incoming\)" || echo "")
-        local default_out=$(ufw status verbose | grep "Default:" | grep -oP "allow \(outgoing\)" || echo "")
+        default_in=$(ufw status verbose | grep "Default:" | grep -oP "deny \(incoming\)" || echo "")
+        default_out=$(ufw status verbose | grep "Default:" | grep -oP "allow \(outgoing\)" || echo "")
 
         if [[ -n "$default_in" ]]; then
             check_info "Default incoming: deny (good)"
@@ -268,7 +268,7 @@ if [[ -f /etc/ssh/sshd_config ]]; then
     print_section "Security Settings"
 
     # Check critical settings
-    local ssh_port_cfg=$(grep "^Port " /etc/ssh/sshd_config | awk '{print $2}')
+    ssh_port_cfg=$(grep "^Port " /etc/ssh/sshd_config | awk '{print $2}')
     if [[ -n "$ssh_port_cfg" ]]; then
         check_info "Configured SSH port: $ssh_port_cfg"
 
@@ -314,7 +314,7 @@ print_header "TOR CONFIGURATION"
 if [[ -f /etc/tor/torrc ]]; then
     print_section "Tor Settings"
 
-    local socks_port=$(grep "^SOCKSPort" /etc/tor/torrc | grep -oP '\d+' | head -1)
+    socks_port=$(grep "^SOCKSPort" /etc/tor/torrc | grep -oP '\d+' | head -1)
     if [[ -n "$socks_port" ]]; then
         check_info "SOCKS port configured: $socks_port"
     fi
@@ -341,7 +341,7 @@ print_header "SQUID CONFIGURATION"
 if [[ -f /etc/squid/squid.conf ]]; then
     print_section "Squid Settings"
 
-    local http_port=$(grep "^http_port" /etc/squid/squid.conf | awk '{print $2}')
+    http_port=$(grep "^http_port" /etc/squid/squid.conf | awk '{print $2}')
     if [[ -n "$http_port" ]]; then
         check_info "HTTP port configured: $http_port"
     fi
@@ -351,7 +351,7 @@ if [[ -f /etc/squid/squid.conf ]]; then
         check_pass "Basic authentication configured"
 
         # Show auth program
-        local auth_program=$(grep "^auth_param basic program" /etc/squid/squid.conf | cut -d' ' -f4-)
+        auth_program=$(grep "^auth_param basic program" /etc/squid/squid.conf | cut -d' ' -f4-)
         if [[ -n "$auth_program" ]]; then
             check_info "Auth program: $auth_program"
         fi
@@ -361,7 +361,7 @@ if [[ -f /etc/squid/squid.conf ]]; then
 
     # Check password file
     if [[ -f /etc/squid/passwords ]]; then
-        local user_count=$(wc -l < /etc/squid/passwords 2>/dev/null || echo "0")
+        user_count=$(wc -l < /etc/squid/passwords 2>/dev/null || echo "0")
         check_pass "Password file exists ($user_count users configured)"
 
         if [[ "$user_count" -gt 0 ]]; then
@@ -403,14 +403,14 @@ if command -v fail2ban-client &>/dev/null; then
         print_section "Active Jails"
 
         # List active jails
-        local jails=$(fail2ban-client status 2>/dev/null | grep "Jail list:" | cut -d: -f2 | tr ',' '\n')
+        jails=$(fail2ban-client status 2>/dev/null | grep "Jail list:" | cut -d: -f2 | tr ',' '\n')
 
         if [[ -n "$jails" ]]; then
             for jail in $jails; do
                 jail=$(echo "$jail" | xargs) # trim whitespace
                 if [[ -n "$jail" ]]; then
-                    local banned=$(fail2ban-client status "$jail" 2>/dev/null | grep "Currently banned:" | grep -oP '\d+')
-                    local total=$(fail2ban-client status "$jail" 2>/dev/null | grep "Total banned:" | grep -oP '\d+')
+                    banned=$(fail2ban-client status "$jail" 2>/dev/null | grep "Currently banned:" | grep -oP '\d+')
+                    total=$(fail2ban-client status "$jail" 2>/dev/null | grep "Total banned:" | grep -oP '\d+')
 
                     check_pass "Jail '$jail' active (banned: ${banned:-0}, total: ${total:-0})"
                 fi
@@ -423,7 +423,7 @@ if command -v fail2ban-client &>/dev/null; then
 
         # Try to get reason
         check_info "Checking why fail2ban failed..."
-        local error=$(journalctl -u fail2ban -n 10 --no-pager 2>/dev/null | grep -i error | tail -1)
+        error=$(journalctl -u fail2ban -n 10 --no-pager 2>/dev/null | grep -i error | tail -1)
         if [[ -n "$error" ]]; then
             check_info "$error"
         fi
@@ -449,7 +449,7 @@ run_check "tortopus-diagnostic" "[[ -x /usr/local/bin/tortopus-diagnostic ]]"
 print_header "BACKUP STATUS"
 
 if [[ -d /var/backups/tortopus ]]; then
-    local backup_count=$(ls -1 /var/backups/tortopus | wc -l)
+    backup_count=$(ls -1 /var/backups/tortopus | wc -l)
     check_pass "Backup directory exists ($backup_count files)"
 
     print_section "Recent Backups"
@@ -469,7 +469,7 @@ print_section "Recent Errors"
 
 # Check for recent errors in various logs
 if [[ -f /var/log/tortopus-install.log ]]; then
-    local errors=$(grep -i error /var/log/tortopus-install.log 2>/dev/null | tail -3)
+    errors=$(grep -i error /var/log/tortopus-install.log 2>/dev/null | tail -3)
     if [[ -n "$errors" ]]; then
         echo "$errors" | while read line; do
             check_warn "$line"
@@ -481,7 +481,7 @@ fi
 
 # Squid errors
 if [[ -f /var/log/squid/cache.log ]]; then
-    local squid_errors=$(grep -i "ERROR\|WARNING" /var/log/squid/cache.log 2>/dev/null | tail -3)
+    squid_errors=$(grep -i "ERROR\|WARNING" /var/log/squid/cache.log 2>/dev/null | tail -3)
     if [[ -n "$squid_errors" ]]; then
         echo "$squid_errors" | while read line; do
             check_warn "Squid: $line"
@@ -507,14 +507,14 @@ if command -v curl &>/dev/null && systemctl is-active --quiet squid 2>/dev/null;
 
     # Get first user from password file for testing
     if [[ -f /etc/squid/passwords ]]; then
-        local test_user=$(head -1 /etc/squid/passwords 2>/dev/null | cut -d: -f1)
+        test_user=$(head -1 /etc/squid/passwords 2>/dev/null | cut -d: -f1)
 
         if [[ -n "$test_user" ]]; then
             check_info "Testing with user: $test_user"
 
             # Note: We can't test with password since it's hashed
             # Just check if proxy responds to requests
-            local proxy_response=$(timeout 5 curl -x http://127.0.0.1:3128 -s -o /dev/null -w "%{http_code}" https://ifconfig.me 2>/dev/null || echo "000")
+            proxy_response=$(timeout 5 curl -x http://127.0.0.1:3128 -s -o /dev/null -w "%{http_code}" https://ifconfig.me 2>/dev/null || echo "000")
 
             if [[ "$proxy_response" == "200" ]]; then
                 check_pass "Proxy accepting connections (HTTP 200)"
