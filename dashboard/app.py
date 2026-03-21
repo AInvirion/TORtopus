@@ -16,6 +16,7 @@ app.secret_key = os.urandom(24)  # Change this to a fixed secret in production
 
 # Configuration
 SQUID_PASSWORDS_FILE = '/etc/squid/passwords'
+SQUID_CONFIG_FILE = '/etc/squid/squid.conf'
 DASHBOARD_USER = 'admin'
 DASHBOARD_PASSWORD = 'changeme123'  # CHANGE THIS!
 
@@ -145,19 +146,50 @@ def change_user_password(username, new_password):
     else:
         return False, f"Failed to change password: {stderr}"
 
+def get_proxy_mode():
+    """Get current proxy mode (direct or tor)"""
+    try:
+        if os.path.exists(SQUID_CONFIG_FILE):
+            with open(SQUID_CONFIG_FILE, 'r') as f:
+                content = f.read()
+                # Check for active (uncommented) cache_peer line with port 8118 (Privoxy)
+                if re.search(r'^cache_peer\s+127\.0\.0\.1\s+parent\s+8118', content, re.MULTILINE):
+                    return 'tor'
+                # Also check for old port 9050 (direct to Tor, which doesn't work but might exist)
+                if re.search(r'^cache_peer\s+127\.0\.0\.1\s+parent\s+9050', content, re.MULTILINE):
+                    return 'tor'
+        return 'direct'
+    except Exception as e:
+        print(f"Error reading proxy mode: {e}")
+        return 'unknown'
+
+def set_proxy_mode(mode):
+    """Set proxy mode (direct or tor)"""
+    if mode not in ['direct', 'tor']:
+        return False, "Invalid mode. Use 'direct' or 'tor'"
+
+    success, stdout, stderr = run_command(f'tortopus-config --mode {mode}')
+
+    if success:
+        return True, f"Proxy mode changed to {mode}"
+    else:
+        return False, f"Failed to change mode: {stderr}"
+
 def get_system_status():
     """Get system and service status"""
     status = {
         'squid': 'unknown',
         'tor': 'unknown',
+        'privoxy': 'unknown',
         'fail2ban': 'unknown',
         'ufw': 'unknown',
+        'proxy_mode': get_proxy_mode(),
         'user_count': len(get_proxy_users()),
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
 
-    services = ['squid', 'tor@default', 'fail2ban', 'ufw']
-    service_keys = ['squid', 'tor', 'fail2ban', 'ufw']
+    services = ['squid', 'tor@default', 'privoxy', 'fail2ban', 'ufw']
+    service_keys = ['squid', 'tor', 'privoxy', 'fail2ban', 'ufw']
 
     for service, key in zip(services, service_keys):
         success, stdout, stderr = run_command(f'systemctl is-active {service}')
@@ -230,7 +262,7 @@ def api_users():
 @requires_auth
 def restart_service(service):
     """Restart a service"""
-    allowed_services = ['squid', 'tor@default', 'fail2ban']
+    allowed_services = ['squid', 'tor@default', 'privoxy', 'fail2ban']
 
     if service not in allowed_services:
         flash('Invalid service', 'error')
@@ -243,6 +275,14 @@ def restart_service(service):
     else:
         flash(f'Failed to restart {service}: {stderr}', 'error')
 
+    return redirect(url_for('index'))
+
+@app.route('/set_proxy_mode/<mode>', methods=['POST'])
+@requires_auth
+def change_proxy_mode(mode):
+    """Change proxy mode (direct or tor)"""
+    success, message = set_proxy_mode(mode)
+    flash(message, 'success' if success else 'error')
     return redirect(url_for('index'))
 
 if __name__ == '__main__':

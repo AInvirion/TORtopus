@@ -88,6 +88,43 @@
             color: #dc3545 !important;
         }
 
+        .status-tor {
+            color: #6f42c1 !important;
+        }
+
+        .status-direct {
+            color: #17a2b8 !important;
+        }
+
+        .mode-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .btn-tor {
+            background: #6f42c1;
+            color: white;
+        }
+
+        .btn-tor:hover {
+            background: #5a32a3;
+        }
+
+        .btn-direct {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .btn-direct:hover {
+            background: #138496;
+        }
+
+        .btn-disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
         .form-group {
             margin-bottom: 15px;
         }
@@ -242,9 +279,39 @@
             </h2>
             <div class="status-grid">
                 <div class="status-item">
+                    <h3>Proxy Mode</h3>
+                    <div class="value status-{{ status.proxy_mode }}">
+                        {% if status.proxy_mode == 'tor' %}
+                            🧅 Tor Mode
+                        {% elif status.proxy_mode == 'direct' %}
+                            🌐 Direct Mode
+                        {% else %}
+                            {{ status.proxy_mode }}
+                        {% endif %}
+                    </div>
+                    <div class="mode-buttons">
+                        <form method="POST" action="{{ url_for('change_proxy_mode', mode='direct') }}" style="display: inline;">
+                            <button type="submit" class="btn btn-direct btn-small {% if status.proxy_mode == 'direct' %}btn-disabled{% endif %}" {% if status.proxy_mode == 'direct' %}disabled{% endif %}>
+                                Direct
+                            </button>
+                        </form>
+                        <form method="POST" action="{{ url_for('change_proxy_mode', mode='tor') }}" style="display: inline;">
+                            <button type="submit" class="btn btn-tor btn-small {% if status.proxy_mode == 'tor' %}btn-disabled{% endif %}" {% if status.proxy_mode == 'tor' %}disabled{% endif %}>
+                                Tor
+                            </button>
+                        </form>
+                    </div>
+                </div>
+                <div class="status-item">
                     <h3>Squid Proxy</h3>
                     <div class="value status-{{ status.squid }}">
                         {{ status.squid }}
+                    </div>
+                </div>
+                <div class="status-item">
+                    <h3>Privoxy Bridge</h3>
+                    <div class="value status-{{ status.privoxy }}">
+                        {{ status.privoxy }}
                     </div>
                 </div>
                 <div class="status-item">
