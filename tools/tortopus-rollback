@@ -1,0 +1,61 @@
+#!/bin/bash
+# TORtopus Rollback Script
+
+BACKUP_DIR="/var/backups/tortopus"
+
+if [[ $EUID -ne 0 ]]; then
+    echo "This script must be run as root"
+    exit 1
+fi
+
+if [[ ! -d "$BACKUP_DIR" ]]; then
+    echo "No backups found at $BACKUP_DIR"
+    exit 1
+fi
+
+echo "Available backups:"
+ls -1 "$BACKUP_DIR"
+echo ""
+echo "WARNING: This will restore configuration files from backups."
+read -p "Continue? (y/n) " -n 1 -r
+echo
+
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Rollback cancelled"
+    exit 0
+fi
+
+# Restore SSH config
+if ls "$BACKUP_DIR"/sshd_config.backup.* 1> /dev/null 2>&1; then
+    latest_ssh=$(ls -t "$BACKUP_DIR"/sshd_config.backup.* | head -1)
+    cp "$latest_ssh" /etc/ssh/sshd_config
+    echo "Restored: /etc/ssh/sshd_config"
+fi
+
+# Restore Squid config
+if ls "$BACKUP_DIR"/squid.conf.backup.* 1> /dev/null 2>&1; then
+    latest_squid=$(ls -t "$BACKUP_DIR"/squid.conf.backup.* | head -1)
+    cp "$latest_squid" /etc/squid/squid.conf
+    echo "Restored: /etc/squid/squid.conf"
+fi
+
+# Restore Tor config
+if ls "$BACKUP_DIR"/torrc.backup.* 1> /dev/null 2>&1; then
+    latest_tor=$(ls -t "$BACKUP_DIR"/torrc.backup.* | head -1)
+    cp "$latest_tor" /etc/tor/torrc
+    echo "Restored: /etc/tor/torrc"
+fi
+
+# Restore Privoxy config
+if ls "$BACKUP_DIR"/privoxy.config.backup.* 1> /dev/null 2>&1; then
+    latest_privoxy=$(ls -t "$BACKUP_DIR"/privoxy.config.backup.* | head -1)
+    cp "$latest_privoxy" /etc/privoxy/config
+    echo "Restored: /etc/privoxy/config"
+fi
+
+echo ""
+echo "Rollback complete. Restart services manually if needed:"
+echo "  sudo systemctl restart sshd"
+echo "  sudo systemctl restart squid"
+echo "  sudo systemctl restart tor"
+echo "  sudo systemctl restart privoxy"

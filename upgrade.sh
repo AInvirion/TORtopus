@@ -191,134 +191,32 @@ fix_squid_config() {
 update_scripts() {
     log "Updating management scripts..."
 
-    # tortopus-config needs to be regenerated with Privoxy support
-    # Check if current version uses old port 9050 or doesn't exist
-    if [[ ! -x "${BIN_DIR}/tortopus-config" ]] || grep -q "9050" "${BIN_DIR}/tortopus-config" 2>/dev/null; then
-        log "Regenerating tortopus-config with Privoxy support..."
+    local scripts=("tortopus-user" "tortopus-config" "tortopus-rollback" "tortopus-diagnostic")
 
-        # Backup old version if exists
-        if [[ -f "${BIN_DIR}/tortopus-config" ]]; then
-            cp "${BIN_DIR}/tortopus-config" "$BACKUP_DIR/tortopus-config.backup.$(date +%Y%m%d%H%M%S)"
+    for script in "${scripts[@]}"; do
+        info "Downloading $script..."
+
+        if curl -sSL "${REPO_URL}/tools/${script}" -o "/tmp/${script}.new" 2>/dev/null; then
+            # Check if download was successful (not a 404 page)
+            if head -1 "/tmp/${script}.new" | grep -q "^#!/bin/bash"; then
+                # Backup old version if exists
+                if [[ -f "${BIN_DIR}/${script}" ]]; then
+                    cp "${BIN_DIR}/${script}" "$BACKUP_DIR/${script}.backup.$(date +%Y%m%d%H%M%S)"
+                fi
+
+                mv "/tmp/${script}.new" "${BIN_DIR}/${script}"
+                chmod +x "${BIN_DIR}/${script}"
+                log "Updated: $script"
+            else
+                warn "Downloaded file for $script is not valid, skipping"
+                rm -f "/tmp/${script}.new"
+            fi
+        else
+            warn "Could not download $script"
         fi
-
-        cat > "${BIN_DIR}/tortopus-config" << 'EOFCONFIG'
-#!/bin/bash
-# TORtopus Configuration Script
-
-SQUID_CONF="/etc/squid/squid.conf"
-
-show_usage() {
-    echo "Usage: tortopus-config --mode [direct|tor]"
-    echo ""
-    echo "Modes:"
-    echo "  direct  - Direct proxy (faster, no anonymity)"
-    echo "  tor     - Route through Tor (slower, anonymous)"
-    echo ""
+    done
 }
 
-enable_tor_mode() {
-    echo "Enabling Tor mode..."
-
-    # Check if already enabled
-    if grep -q "^cache_peer 127.0.0.1 parent 8118" "$SQUID_CONF"; then
-        echo "Tor mode already enabled"
-        exit 0
-    fi
-
-    # Ensure Privoxy and Tor are running
-    if ! systemctl is-active --quiet privoxy; then
-        echo "Starting Privoxy..."
-        systemctl start privoxy
-    fi
-    if ! systemctl is-active --quiet tor; then
-        echo "Starting Tor..."
-        systemctl start tor
-    fi
-
-    # Backup
-    cp "$SQUID_CONF" "$SQUID_CONF.bak"
-
-    # Enable Tor forwarding (via Privoxy)
-    sed -i 's/^# never_direct allow all/never_direct allow all/' "$SQUID_CONF"
-    sed -i 's/^# cache_peer 127.0.0.1 parent 8118/cache_peer 127.0.0.1 parent 8118/' "$SQUID_CONF"
-
-    systemctl restart squid
-    echo "Tor mode enabled. All traffic will route through Tor (via Privoxy)."
-}
-
-enable_direct_mode() {
-    echo "Enabling direct mode..."
-
-    # Check if already disabled
-    if grep -q "^# cache_peer 127.0.0.1 parent 8118" "$SQUID_CONF"; then
-        echo "Direct mode already enabled"
-        exit 0
-    fi
-
-    # Backup
-    cp "$SQUID_CONF" "$SQUID_CONF.bak"
-
-    # Disable Tor forwarding
-    sed -i 's/^never_direct allow all/# never_direct allow all/' "$SQUID_CONF"
-    sed -i 's/^cache_peer 127.0.0.1 parent 8118/# cache_peer 127.0.0.1 parent 8118/' "$SQUID_CONF"
-
-    systemctl restart squid
-    echo "Direct mode enabled. Traffic will not route through Tor."
-}
-
-if [[ $EUID -ne 0 ]]; then
-    echo "This script must be run as root"
-    exit 1
-fi
-
-case "${1:-}" in
-    --mode)
-        case "${2:-}" in
-            tor)
-                enable_tor_mode
-                ;;
-            direct)
-                enable_direct_mode
-                ;;
-            *)
-                show_usage
-                exit 1
-                ;;
-        esac
-        ;;
-    *)
-        show_usage
-        exit 1
-        ;;
-esac
-EOFCONFIG
-
-        chmod +x "${BIN_DIR}/tortopus-config"
-        log "tortopus-config regenerated with Privoxy support"
-    fi
-}
-
-#=============================================================================
-# Update Diagnostic Script
-#=============================================================================
-
-update_diagnostic() {
-    log "Updating diagnostic script..."
-
-    # Download latest diagnostic script
-    if curl -sSL "${REPO_URL}/tortopus-diagnostic.sh" -o "/tmp/tortopus-diagnostic.new" 2>/dev/null; then
-        # Backup old version
-        if [[ -f "${BIN_DIR}/tortopus-diagnostic" ]]; then
-            cp "${BIN_DIR}/tortopus-diagnostic" "$BACKUP_DIR/tortopus-diagnostic.backup.$(date +%Y%m%d%H%M%S)"
-        fi
-
-        mv "/tmp/tortopus-diagnostic.new" "${BIN_DIR}/tortopus-diagnostic"
-        chmod +x "${BIN_DIR}/tortopus-diagnostic"
-        log "Diagnostic script updated"
-    else
-        warn "Could not download diagnostic script"
-    fi
-}
 
 #=============================================================================
 # Update Dashboard
